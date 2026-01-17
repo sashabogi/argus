@@ -1,71 +1,84 @@
 /**
- * Argus Onboarding UI - Ink-based Wizard
+ * Argus Onboarding UI - Clean wizard matching Claude Code style
  * 
- * A clean, tabbed wizard interface similar to Claude Code's planning mode.
- * Shows all sections on one screen with Tab navigation between them.
+ * Design principles from Claude Code:
+ * - Tab bar at top with "(tab to cycle)"
+ * - Clean list items with ○/● indicators
+ * - › for current selection
+ * - Footer with keyboard hints
+ * - No boxes or borders, just spacing
  */
 
 import React, { useState, useCallback } from 'react';
 import { render, Box, Text, useInput, useApp } from 'ink';
-import { Select, MultiSelect, TextInput, ConfirmInput } from '@inkjs/ui';
 import type { ExperienceLevel, OnboardingConfig, ProjectOnboardingConfig, DetectedKeyFile } from './onboarding.js';
 import { COMMON_KEY_FILE_PATTERNS, DEFAULT_ONBOARDING_CONFIG } from './onboarding.js';
-
-// ============================================================================
-// Types
-// ============================================================================
-
-interface WizardSection {
-  id: string;
-  title: string;
-  completed: boolean;
-}
 
 // ============================================================================
 // Shared Components
 // ============================================================================
 
-interface SectionBoxProps {
-  title: string;
-  isActive: boolean;
-  isCompleted: boolean;
-  children: React.ReactNode;
+interface TabBarProps {
+  tabs: string[];
+  activeIndex: number;
 }
 
-function SectionBox({ title, isActive, isCompleted, children }: SectionBoxProps) {
-  const borderColor = isActive ? 'cyan' : isCompleted ? 'green' : 'gray';
-  const titleColor = isActive ? 'cyan' : isCompleted ? 'green' : 'white';
+function TabBar({ tabs, activeIndex }: TabBarProps) {
+  return (
+    <Box marginBottom={1}>
+      {tabs.map((tab, i) => (
+        <React.Fragment key={tab}>
+          {i === activeIndex ? (
+            <Text bold inverse> {tab} </Text>
+          ) : (
+            <Text dimColor>  {tab}  </Text>
+          )}
+        </React.Fragment>
+      ))}
+      <Text dimColor>  (tab to cycle)</Text>
+    </Box>
+  );
+}
+
+interface SelectItemProps {
+  label: string;
+  description?: string;
+  isSelected: boolean;
+  isCurrent: boolean;
+  isMulti?: boolean;
+}
+
+function SelectItem({ label, description, isSelected, isCurrent, isMulti = false }: SelectItemProps) {
+  const indicator = isMulti 
+    ? (isSelected ? '●' : '○')
+    : (isSelected ? '●' : '○');
   
   return (
-    <Box
-      flexDirection="column"
-      borderStyle="round"
-      borderColor={borderColor}
-      paddingX={1}
-      paddingY={0}
-      marginBottom={1}
-    >
-      <Box marginBottom={0}>
-        <Text color={titleColor} bold={isActive}>
-          {isCompleted ? '✓ ' : isActive ? '▸ ' : '  '}
-          {title}
+    <Box flexDirection="column">
+      <Box>
+        <Text color={isCurrent ? 'cyan' : undefined}>
+          {isCurrent ? '› ' : '  '}
         </Text>
+        <Text color={isSelected ? 'cyan' : 'gray'}>{indicator} </Text>
+        <Text bold={isCurrent}>{label}</Text>
       </Box>
-      <Box paddingLeft={2}>
-        {children}
-      </Box>
+      {description && (
+        <Box marginLeft={4}>
+          <Text dimColor>{description}</Text>
+        </Box>
+      )}
     </Box>
   );
 }
 
 interface FooterProps {
-  hint: string;
+  hints: string[];
 }
 
-function Footer({ hint }: FooterProps) {
+function Footer({ hints }: FooterProps) {
   return (
-    <Box borderStyle="single" borderColor="gray" paddingX={1}>
-      <Text dimColor>{hint}</Text>
+    <Box marginTop={1} borderStyle="single" borderColor="gray" borderTop borderBottom={false} borderLeft={false} borderRight={false} paddingTop={0}>
+      <Text dimColor>{hints.join(' · ')}</Text>
     </Box>
   );
 }
@@ -78,49 +91,80 @@ interface GlobalWizardProps {
   onComplete: (config: OnboardingConfig) => void;
 }
 
-type GlobalStep = 'experience' | 'patterns' | 'custom' | 'behaviors' | 'confirm';
+type GlobalTab = 'experience' | 'patterns' | 'behaviors' | 'confirm';
 
 function GlobalWizard({ onComplete }: GlobalWizardProps) {
   const { exit } = useApp();
   
-  // State
-  const [currentStep, setCurrentStep] = useState<GlobalStep>('experience');
+  // Tab state
+  const [activeTab, setActiveTab] = useState<GlobalTab>('experience');
+  
+  // Form state
   const [experienceLevel, setExperienceLevel] = useState<ExperienceLevel>('intermediate');
-  const [selectedPatterns, setSelectedPatterns] = useState<string[]>(
-    COMMON_KEY_FILE_PATTERNS.filter(p => p.default).map(p => p.pattern)
+  const [selectedPatterns, setSelectedPatterns] = useState<Set<string>>(
+    new Set(COMMON_KEY_FILE_PATTERNS.filter(p => p.default).map(p => p.pattern))
   );
   const [customPatterns, setCustomPatterns] = useState('');
   const [refreshStale, setRefreshStale] = useState(true);
   const [contextRestore, setContextRestore] = useState(true);
   const [trackNew, setTrackNew] = useState<'auto' | 'ask' | 'manual'>('auto');
   
-  // Navigation
-  const steps: GlobalStep[] = experienceLevel === 'beginner' 
-    ? ['experience', 'confirm']
-    : experienceLevel === 'intermediate'
-    ? ['experience', 'patterns', 'confirm']
-    : ['experience', 'patterns', 'custom', 'behaviors', 'confirm'];
+  // List navigation
+  const [cursorIndex, setCursorIndex] = useState(0);
+  const [isEditingCustom, setIsEditingCustom] = useState(false);
   
-  const currentIndex = steps.indexOf(currentStep);
-  const isFirstStep = currentIndex === 0;
-  const isLastStep = currentIndex === steps.length - 1;
+  // Determine available tabs based on experience
+  const getTabs = useCallback((): GlobalTab[] => {
+    if (experienceLevel === 'beginner') return ['experience', 'confirm'];
+    if (experienceLevel === 'intermediate') return ['experience', 'patterns', 'confirm'];
+    return ['experience', 'patterns', 'behaviors', 'confirm'];
+  }, [experienceLevel]);
   
-  const goNext = useCallback(() => {
-    if (!isLastStep) {
-      setCurrentStep(steps[currentIndex + 1]);
+  const tabs = getTabs();
+  const tabIndex = tabs.indexOf(activeTab);
+  
+  // Get items for current tab
+  const getItems = useCallback(() => {
+    switch (activeTab) {
+      case 'experience':
+        return [
+          { id: 'beginner', label: 'Beginner', desc: 'Auto-setup, minimal questions' },
+          { id: 'intermediate', label: 'Intermediate', desc: 'Smart defaults with confirmation' },
+          { id: 'expert', label: 'Expert', desc: 'Full control over all settings' },
+        ];
+      case 'patterns':
+        return [
+          ...COMMON_KEY_FILE_PATTERNS.map(p => ({
+            id: p.pattern,
+            label: p.pattern,
+            desc: p.description,
+            multi: true,
+          })),
+          { id: '_custom', label: 'Custom patterns...', desc: customPatterns || 'Add your own patterns', multi: false },
+        ];
+      case 'behaviors':
+        return [
+          { id: 'refresh', label: `Auto-refresh snapshots: ${refreshStale ? 'Yes' : 'No'}`, desc: 'Refresh when snapshots become stale' },
+          { id: 'context', label: `Context restore: ${contextRestore ? 'Yes' : 'No'}`, desc: 'Auto-restore after compaction' },
+          { id: 'track', label: `New key files: ${trackNew}`, desc: 'When new potential key files detected' },
+        ];
+      case 'confirm':
+        return [
+          { id: 'confirm', label: 'Confirm and continue', desc: 'Save settings and install MCP server' },
+          { id: 'back', label: 'Go back', desc: 'Review settings' },
+        ];
+      default:
+        return [];
     }
-  }, [currentIndex, isLastStep, steps]);
+  }, [activeTab, customPatterns, refreshStale, contextRestore, trackNew]);
   
-  const goPrev = useCallback(() => {
-    if (!isFirstStep) {
-      setCurrentStep(steps[currentIndex - 1]);
-    }
-  }, [currentIndex, isFirstStep, steps]);
+  const items = getItems();
   
+  // Handle completion
   const handleComplete = useCallback(() => {
     const allPatterns = [
-      ...selectedPatterns,
-      ...(customPatterns ? customPatterns.split(',').map(p => p.trim()).filter(Boolean) : [])
+      ...Array.from(selectedPatterns),
+      ...(customPatterns ? customPatterns.split(',').map(p => p.trim()).filter(Boolean) : []),
     ];
     
     const config: OnboardingConfig = {
@@ -129,11 +173,7 @@ function GlobalWizard({ onComplete }: GlobalWizardProps) {
         ? DEFAULT_ONBOARDING_CONFIG.globalKeyPatterns 
         : allPatterns,
       autoBehaviors: experienceLevel === 'expert'
-        ? {
-            refreshStaleSnapshots: refreshStale,
-            contextRestoreOnCompact: contextRestore,
-            trackNewKeyFiles: trackNew,
-          }
+        ? { refreshStaleSnapshots: refreshStale, contextRestoreOnCompact: contextRestore, trackNewKeyFiles: trackNew }
         : DEFAULT_ONBOARDING_CONFIG.autoBehaviors,
       projects: {},
     };
@@ -142,182 +182,188 @@ function GlobalWizard({ onComplete }: GlobalWizardProps) {
     exit();
   }, [experienceLevel, selectedPatterns, customPatterns, refreshStale, contextRestore, trackNew, onComplete, exit]);
   
-  // Keyboard handling
+  // Input handling
   useInput((input, key) => {
     if (key.escape) {
-      exit();
+      if (isEditingCustom) {
+        setIsEditingCustom(false);
+      } else {
+        exit();
+      }
+      return;
+    }
+    
+    // Tab navigation
+    if (key.tab) {
+      const newIndex = key.shift 
+        ? (tabIndex - 1 + tabs.length) % tabs.length
+        : (tabIndex + 1) % tabs.length;
+      setActiveTab(tabs[newIndex]);
+      setCursorIndex(0);
+      return;
+    }
+    
+    // If editing custom patterns
+    if (isEditingCustom) {
+      if (key.return) {
+        setIsEditingCustom(false);
+      } else if (key.backspace || key.delete) {
+        setCustomPatterns(prev => prev.slice(0, -1));
+      } else if (input && !key.ctrl && !key.meta) {
+        setCustomPatterns(prev => prev + input);
+      }
+      return;
+    }
+    
+    // List navigation
+    if (key.upArrow) {
+      setCursorIndex(prev => Math.max(0, prev - 1));
+      return;
+    }
+    if (key.downArrow) {
+      setCursorIndex(prev => Math.min(items.length - 1, prev + 1));
+      return;
+    }
+    
+    // Selection
+    if (key.return || input === ' ') {
+      const item = items[cursorIndex];
+      if (!item) return;
+      
+      switch (activeTab) {
+        case 'experience':
+          setExperienceLevel(item.id as ExperienceLevel);
+          // Auto-advance to next tab
+          const newTabs = item.id === 'beginner' 
+            ? ['experience', 'confirm'] 
+            : item.id === 'intermediate'
+            ? ['experience', 'patterns', 'confirm']
+            : ['experience', 'patterns', 'behaviors', 'confirm'];
+          setActiveTab(newTabs[1] as GlobalTab);
+          setCursorIndex(0);
+          break;
+          
+        case 'patterns':
+          if (item.id === '_custom') {
+            setIsEditingCustom(true);
+          } else {
+            setSelectedPatterns(prev => {
+              const next = new Set(prev);
+              if (next.has(item.id)) {
+                next.delete(item.id);
+              } else {
+                next.add(item.id);
+              }
+              return next;
+            });
+          }
+          break;
+          
+        case 'behaviors':
+          if (item.id === 'refresh') setRefreshStale(!refreshStale);
+          else if (item.id === 'context') setContextRestore(!contextRestore);
+          else if (item.id === 'track') setTrackNew(trackNew === 'auto' ? 'ask' : trackNew === 'ask' ? 'manual' : 'auto');
+          break;
+          
+        case 'confirm':
+          if (item.id === 'confirm') {
+            handleComplete();
+          } else {
+            // Go back to previous tab
+            setActiveTab(tabs[tabIndex - 1] || 'experience');
+            setCursorIndex(0);
+          }
+          break;
+      }
     }
   });
   
-  // Experience level options
-  const experienceOptions = [
-    { label: 'Beginner    - Auto-setup, minimal questions', value: 'beginner' as ExperienceLevel },
-    { label: 'Intermediate - Smart defaults with confirmation', value: 'intermediate' as ExperienceLevel },
-    { label: 'Expert      - Full control over all settings', value: 'expert' as ExperienceLevel },
-  ];
+  // Get tab display names
+  const tabNames = tabs.map(t => {
+    switch (t) {
+      case 'experience': return 'Experience';
+      case 'patterns': return 'Patterns';
+      case 'behaviors': return 'Behaviors';
+      case 'confirm': return 'Confirm';
+      default: return t;
+    }
+  });
   
-  // Pattern options for MultiSelect
-  const patternOptions = COMMON_KEY_FILE_PATTERNS.map(p => ({
-    label: `${p.pattern.padEnd(18)} ${p.description}`,
-    value: p.pattern,
-  }));
+  // Get title for current tab
+  const getTitle = () => {
+    switch (activeTab) {
+      case 'experience': return 'Select your experience level';
+      case 'patterns': return `Key file patterns (${selectedPatterns.size} selected)`;
+      case 'behaviors': return 'Configure auto behaviors';
+      case 'confirm': return 'Ready to complete setup';
+      default: return '';
+    }
+  };
   
-  // Track new options
-  const trackNewOptions = [
-    { label: 'Auto   - Track automatically', value: 'auto' as const },
-    { label: 'Ask    - Ask me each time', value: 'ask' as const },
-    { label: 'Manual - I\'ll add manually', value: 'manual' as const },
-  ];
+  // Get footer hints
+  const getHints = () => {
+    if (isEditingCustom) {
+      return ['Type patterns', 'Enter: done', 'Esc: cancel'];
+    }
+    switch (activeTab) {
+      case 'patterns':
+        return ['↑↓: navigate', 'Space: (de)select', 'Tab: next section', 'Esc: cancel'];
+      default:
+        return ['↑↓: navigate', 'Enter: select', 'Tab: next section', 'Esc: cancel'];
+    }
+  };
   
   return (
-    <Box flexDirection="column" padding={1}>
+    <Box flexDirection="column" paddingX={1}>
       {/* Header */}
       <Box marginBottom={1}>
-        <Text bold color="cyan">🔮 ARGUS SETUP</Text>
-        <Box flexGrow={1} />
-        <Text dimColor>Step {currentIndex + 1} of {steps.length}</Text>
+        <Text bold color="cyan">🔮 Argus Setup</Text>
       </Box>
       
-      {/* Experience Level Section */}
-      <SectionBox
-        title="Experience Level"
-        isActive={currentStep === 'experience'}
-        isCompleted={steps.indexOf('experience') < currentIndex}
-      >
-        {currentStep === 'experience' ? (
-          <Select
-            options={experienceOptions}
-            defaultValue={experienceLevel}
-            onChange={(value) => {
-              setExperienceLevel(value as ExperienceLevel);
-              goNext();
-            }}
-          />
-        ) : (
-          <Text color="green">{experienceLevel}</Text>
-        )}
-      </SectionBox>
+      {/* Tab bar */}
+      <TabBar tabs={tabNames} activeIndex={tabIndex} />
       
-      {/* Patterns Section (Intermediate/Expert) */}
-      {experienceLevel !== 'beginner' && (
-        <SectionBox
-          title="Key File Patterns"
-          isActive={currentStep === 'patterns'}
-          isCompleted={steps.indexOf('patterns') < currentIndex}
-        >
-          {currentStep === 'patterns' ? (
-            <Box flexDirection="column">
-              <Box marginBottom={1}>
-                <Text dimColor>Select patterns to track across all projects:</Text>
-              </Box>
-              <MultiSelect
-                options={patternOptions}
-                defaultValue={selectedPatterns}
-                onChange={setSelectedPatterns}
-                onSubmit={() => goNext()}
-              />
-            </Box>
-          ) : (
-            <Text color="green">{selectedPatterns.length} patterns selected</Text>
-          )}
-        </SectionBox>
+      {/* Title */}
+      <Box marginBottom={1}>
+        <Text bold>{getTitle()}</Text>
+      </Box>
+      
+      {/* Custom pattern input */}
+      {activeTab === 'patterns' && isEditingCustom && (
+        <Box marginBottom={1}>
+          <Text>○ </Text>
+          <Text dimColor>Custom: </Text>
+          <Text>{customPatterns}</Text>
+          <Text color="cyan">█</Text>
+        </Box>
       )}
       
-      {/* Custom Patterns Section (Expert only) */}
-      {experienceLevel === 'expert' && (
-        <SectionBox
-          title="Custom Patterns"
-          isActive={currentStep === 'custom'}
-          isCompleted={steps.indexOf('custom') < currentIndex}
-        >
-          {currentStep === 'custom' ? (
-            <Box flexDirection="column">
-              <Box marginBottom={1}>
-                <Text dimColor>Add custom patterns (comma-separated):</Text>
-              </Box>
-              <TextInput
-                placeholder="e.g., development-notes*, .plan, SYSTEM-STATUS*"
-                defaultValue={customPatterns}
-                onChange={setCustomPatterns}
-                onSubmit={() => goNext()}
-              />
-            </Box>
-          ) : (
-            <Text color="green">{customPatterns || '(none)'}</Text>
-          )}
-        </SectionBox>
-      )}
+      {/* List items */}
+      {!isEditingCustom && items.map((item, i) => (
+        <SelectItem
+          key={item.id}
+          label={item.label}
+          description={item.desc}
+          isCurrent={i === cursorIndex}
+          isSelected={
+            activeTab === 'experience' ? item.id === experienceLevel :
+            activeTab === 'patterns' ? selectedPatterns.has(item.id) :
+            activeTab === 'confirm' ? item.id === 'confirm' :
+            false
+          }
+          isMulti={activeTab === 'patterns' && item.id !== '_custom'}
+        />
+      ))}
       
-      {/* Behaviors Section (Expert only) */}
-      {experienceLevel === 'expert' && (
-        <SectionBox
-          title="Auto Behaviors"
-          isActive={currentStep === 'behaviors'}
-          isCompleted={steps.indexOf('behaviors') < currentIndex}
-        >
-          {currentStep === 'behaviors' ? (
-            <Box flexDirection="column" gap={1}>
-              <Box>
-                <Text>Auto-refresh stale snapshots? </Text>
-                <ConfirmInput
-                  defaultChoice={refreshStale ? 'confirm' : 'cancel'}
-                  onConfirm={() => setRefreshStale(true)}
-                  onCancel={() => setRefreshStale(false)}
-                />
-              </Box>
-              <Box>
-                <Text>Context restore on compaction? </Text>
-                <ConfirmInput
-                  defaultChoice={contextRestore ? 'confirm' : 'cancel'}
-                  onConfirm={() => setContextRestore(true)}
-                  onCancel={() => setContextRestore(false)}
-                />
-              </Box>
-              <Box flexDirection="column">
-                <Text>When new key files detected:</Text>
-                <Select
-                  options={trackNewOptions}
-                  defaultValue={trackNew}
-                  onChange={(value) => {
-                    setTrackNew(value as 'auto' | 'ask' | 'manual');
-                    goNext();
-                  }}
-                />
-              </Box>
-            </Box>
-          ) : (
-            <Text color="green">Configured</Text>
-          )}
-        </SectionBox>
+      {/* Scroll indicator */}
+      {items.length > 8 && cursorIndex < items.length - 1 && (
+        <Box marginLeft={2}>
+          <Text dimColor>↓ more below</Text>
+        </Box>
       )}
-      
-      {/* Confirm Section */}
-      <SectionBox
-        title="Confirm Setup"
-        isActive={currentStep === 'confirm'}
-        isCompleted={false}
-      >
-        {currentStep === 'confirm' ? (
-          <Box flexDirection="column" gap={1}>
-            <Text>Ready to complete setup?</Text>
-            <Box gap={2}>
-              <Text bold color="cyan">[Enter]</Text>
-              <Text>Confirm</Text>
-              <Text bold color="gray">[Esc]</Text>
-              <Text>Cancel</Text>
-            </Box>
-            <ConfirmInput
-              onConfirm={handleComplete}
-              onCancel={() => goPrev()}
-            />
-          </Box>
-        ) : (
-          <Text dimColor>Pending</Text>
-        )}
-      </SectionBox>
       
       {/* Footer */}
-      <Footer hint="↑↓ Navigate  •  Space Select  •  Enter Confirm  •  Esc Cancel" />
+      <Footer hints={getHints()} />
     </Box>
   );
 }
@@ -345,152 +391,163 @@ function ProjectWizard({
   
   // Separate pattern matches from other detections
   const patternMatches = detectedFiles.filter(f => f.matchedPattern);
-  const otherFiles = detectedFiles.filter(f => !f.matchedPattern);
+  const otherFiles = detectedFiles.filter(f => !f.matchedPattern).slice(0, 10);
+  const allFiles = [...patternMatches, ...otherFiles];
   
   // State
-  const [selectedFiles, setSelectedFiles] = useState<string[]>(
-    patternMatches.map(f => f.path) // Pre-select pattern matches
+  const [selectedFiles, setSelectedFiles] = useState<Set<string>>(
+    new Set(patternMatches.map(f => f.path))
   );
-  const [customPatterns, setCustomPatterns] = useState('');
-  const [step, setStep] = useState<'files' | 'custom' | 'confirm'>(
-    detectedFiles.length > 0 ? 'files' : 'confirm'
-  );
+  const [cursorIndex, setCursorIndex] = useState(0);
+  const [tab, setTab] = useState<'files' | 'confirm'>(allFiles.length > 0 ? 'files' : 'confirm');
+  
+  const tabs: ('files' | 'confirm')[] = allFiles.length > 0 ? ['files', 'confirm'] : ['confirm'];
+  const tabIndex = tabs.indexOf(tab);
   
   const handleComplete = useCallback(() => {
     const config: ProjectOnboardingConfig = {
-      keyFiles: selectedFiles,
-      customPatterns: customPatterns 
-        ? customPatterns.split(',').map(p => p.trim()).filter(Boolean)
-        : [],
+      keyFiles: Array.from(selectedFiles),
+      customPatterns: [],
       lastScanDate: new Date().toISOString(),
     };
     onComplete(config);
     exit();
-  }, [selectedFiles, customPatterns, onComplete, exit]);
+  }, [selectedFiles, onComplete, exit]);
   
   useInput((input, key) => {
     if (key.escape) {
       exit();
+      return;
+    }
+    
+    if (key.tab) {
+      const newIndex = key.shift 
+        ? (tabIndex - 1 + tabs.length) % tabs.length
+        : (tabIndex + 1) % tabs.length;
+      setTab(tabs[newIndex]);
+      setCursorIndex(0);
+      return;
+    }
+    
+    if (key.upArrow) {
+      setCursorIndex(prev => Math.max(0, prev - 1));
+      return;
+    }
+    if (key.downArrow) {
+      const maxIndex = tab === 'files' ? allFiles.length - 1 : 1;
+      setCursorIndex(prev => Math.min(maxIndex, prev + 1));
+      return;
+    }
+    
+    if (key.return || input === ' ') {
+      if (tab === 'files') {
+        const file = allFiles[cursorIndex];
+        if (file) {
+          setSelectedFiles(prev => {
+            const next = new Set(prev);
+            if (next.has(file.path)) {
+              next.delete(file.path);
+            } else {
+              next.add(file.path);
+            }
+            return next;
+          });
+        }
+      } else {
+        if (cursorIndex === 0) {
+          handleComplete();
+        } else {
+          setTab('files');
+          setCursorIndex(0);
+        }
+      }
     }
   });
   
-  // Build file options
-  const fileOptions = [
-    ...patternMatches.map(f => ({
-      label: `${f.path.padEnd(30)} (${f.lines} lines) - ${f.reason}`,
-      value: f.path,
-    })),
-    ...otherFiles.slice(0, 10).map(f => ({
-      label: `${f.path.padEnd(30)} (${f.lines} lines) - ${f.reason}`,
-      value: f.path,
-    })),
-  ];
-  
-  const steps = experienceLevel === 'expert' 
-    ? ['files', 'custom', 'confirm'] 
-    : ['files', 'confirm'];
-  const currentIndex = steps.indexOf(step);
+  const tabNames = tabs.map(t => t === 'files' ? 'Files' : 'Confirm');
   
   return (
-    <Box flexDirection="column" padding={1}>
+    <Box flexDirection="column" paddingX={1}>
       {/* Header */}
       <Box marginBottom={1}>
-        <Text bold color="cyan">📂 PROJECT SETUP: {projectName}</Text>
-        <Box flexGrow={1} />
-        <Text dimColor>Step {currentIndex + 1} of {steps.length}</Text>
+        <Text bold color="cyan">📂 Project Setup: {projectName}</Text>
       </Box>
       
-      {/* File Selection Section */}
-      {detectedFiles.length > 0 && (
-        <SectionBox
-          title={`Key Files (${detectedFiles.length} detected)`}
-          isActive={step === 'files'}
-          isCompleted={step !== 'files'}
-        >
-          {step === 'files' ? (
-            <Box flexDirection="column">
-              {patternMatches.length > 0 && (
-                <Text dimColor marginBottom={1}>
-                  ── Matches your global patterns ──
-                </Text>
-              )}
-              <MultiSelect
-                options={fileOptions}
-                defaultValue={selectedFiles}
-                onChange={setSelectedFiles}
-                onSubmit={() => setStep(experienceLevel === 'expert' ? 'custom' : 'confirm')}
-              />
+      {/* Tab bar */}
+      <TabBar tabs={tabNames} activeIndex={tabIndex} />
+      
+      {/* Title */}
+      <Box marginBottom={1}>
+        <Text bold>
+          {tab === 'files' 
+            ? `Select key files (${selectedFiles.size}/${allFiles.length} selected)`
+            : 'Ready to continue'}
+        </Text>
+      </Box>
+      
+      {/* File list */}
+      {tab === 'files' && (
+        <>
+          {patternMatches.length > 0 && (
+            <Box marginBottom={1}>
+              <Text dimColor>── Matches your patterns ──</Text>
             </Box>
-          ) : (
-            <Text color="green">{selectedFiles.length} files selected</Text>
           )}
-        </SectionBox>
-      )}
-      
-      {detectedFiles.length === 0 && (
-        <SectionBox
-          title="Key Files"
-          isActive={false}
-          isCompleted={false}
-        >
-          <Text dimColor>No key files detected matching your patterns</Text>
-        </SectionBox>
-      )}
-      
-      {/* Custom Patterns (Expert) */}
-      {experienceLevel === 'expert' && (
-        <SectionBox
-          title="Project-Specific Patterns"
-          isActive={step === 'custom'}
-          isCompleted={step === 'confirm'}
-        >
-          {step === 'custom' ? (
-            <Box flexDirection="column">
-              <Text dimColor marginBottom={1}>Additional patterns for this project:</Text>
-              <TextInput
-                placeholder="e.g., packages/*/README.md"
-                defaultValue={customPatterns}
-                onChange={setCustomPatterns}
-                onSubmit={() => setStep('confirm')}
-              />
+          {allFiles.map((file, i) => {
+            const isPatternMatch = patternMatches.includes(file);
+            const showSeparator = i === patternMatches.length && otherFiles.length > 0;
+            
+            return (
+              <React.Fragment key={file.path}>
+                {showSeparator && (
+                  <Box marginY={1}>
+                    <Text dimColor>── Other detected files ──</Text>
+                  </Box>
+                )}
+                <SelectItem
+                  label={file.path}
+                  description={`${file.lines} lines · ${file.reason}`}
+                  isCurrent={i === cursorIndex}
+                  isSelected={selectedFiles.has(file.path)}
+                  isMulti
+                />
+              </React.Fragment>
+            );
+          })}
+          {allFiles.length > 8 && cursorIndex < allFiles.length - 1 && (
+            <Box marginLeft={2}>
+              <Text dimColor>↓ more below</Text>
             </Box>
-          ) : (
-            <Text color="green">{customPatterns || '(none)'}</Text>
           )}
-        </SectionBox>
+        </>
       )}
       
-      {/* Confirm */}
-      <SectionBox
-        title="Confirm"
-        isActive={step === 'confirm'}
-        isCompleted={false}
-      >
-        {step === 'confirm' ? (
-          <Box flexDirection="column" gap={1}>
-            <Text>
-              {selectedFiles.length > 0 
-                ? `Track ${selectedFiles.length} key file(s)?`
-                : 'Continue without key files?'}
-            </Text>
-            <ConfirmInput
-              onConfirm={handleComplete}
-              onCancel={() => setStep('files')}
-            />
-          </Box>
-        ) : (
-          <Text dimColor>Pending</Text>
-        )}
-      </SectionBox>
+      {/* Confirm options */}
+      {tab === 'confirm' && (
+        <>
+          <SelectItem
+            label="Confirm and continue"
+            description={`Track ${selectedFiles.size} key file(s)`}
+            isCurrent={cursorIndex === 0}
+            isSelected={cursorIndex === 0}
+          />
+          <SelectItem
+            label="Go back"
+            description="Review file selection"
+            isCurrent={cursorIndex === 1}
+            isSelected={false}
+          />
+        </>
+      )}
       
       {/* Footer */}
-      <Footer hint="↑↓ Navigate  •  Space Select  •  Enter Confirm  •  Esc Cancel" />
+      <Footer hints={['↑↓: navigate', 'Space: (de)select', 'Tab: next section', 'Esc: cancel']} />
     </Box>
   );
 }
 
 // ============================================================================
-// Render Functions (called from CLI)
+// Render Functions
 // ============================================================================
 
 export async function renderGlobalOnboarding(): Promise<OnboardingConfig> {
