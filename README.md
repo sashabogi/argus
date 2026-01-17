@@ -168,8 +168,21 @@ Query an existing snapshot file.
 ### `argus search <snapshot> <pattern>`
 Fast grep search without AI (instant results).
 
+### `argus setup [path]`
+One-command project setup. Creates snapshot, updates .gitignore, optionally injects into project CLAUDE.md.
+
+Options:
+- `--no-claude-md` - Skip CLAUDE.md injection
+- `--no-gitignore` - Skip .gitignore update
+
+### `argus status [path]`
+Check if snapshot is up to date. Shows age and files changed since last snapshot.
+
 ### `argus mcp install`
-Install Argus as an MCP server for Claude Code.
+Install Argus as an MCP server for Claude Code. Also injects global instructions into `~/.claude/CLAUDE.md`.
+
+Options:
+- `--no-claude-md` - Skip global CLAUDE.md injection
 
 ### `argus mcp uninstall`
 Remove Argus from Claude Code.

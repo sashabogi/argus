@@ -66,8 +66,8 @@ my-project/
 ├── TDD.md
 └── CLAUDE.md
 
-# Create a snapshot of just the docs
-argus snapshot . -o .argus/snapshot.txt
+# Set up Argus (creates snapshot of what exists)
+argus setup .
 
 # Ask questions about the PLANNED architecture
 argus analyze .argus/snapshot.txt "Based on the PRD, what modules will we need?"
@@ -87,7 +87,7 @@ my-project/
 └── package.json
 
 # Refresh snapshot
-argus snapshot . -o .argus/snapshot.txt
+argus setup .   # or: argus snapshot . -o .argus/snapshot.txt
 
 # Generate first ARCHITECTURE.md
 argus analyze .argus/snapshot.txt "Document current architecture" > ARCHITECTURE.md
@@ -96,22 +96,19 @@ argus analyze .argus/snapshot.txt "Document current architecture" > ARCHITECTURE
 #### Phase 2: After Each Major Feature
 
 ```bash
-# Just finished implementing auth
+# Just finished implementing auth - refresh
 argus snapshot . -o .argus/snapshot.txt
 
-# Update architecture doc
-argus analyze .argus/snapshot.txt "Update: what's the current state of auth implementation?"
-```
-
-#### Phase 3: Ongoing Development
-
-Add to your workflow (or git hooks):
-```bash
-# After each significant change
-argus snapshot . -o .argus/snapshot.txt
+# Check status anytime
+argus status .
 ```
 
 ### "How do I keep the snapshot up to date?"
+
+**Check if it's stale:**
+```bash
+argus status .
+```
 
 **Option 1: Manual (Recommended)**
 ```bash
@@ -124,14 +121,6 @@ argus snapshot . -o .argus/snapshot.txt
 # .git/hooks/post-commit
 #!/bin/bash
 argus snapshot . -o .argus/snapshot.txt
-```
-
-**Option 3: Before Each Claude Session**
-Add to CLAUDE.md:
-```markdown
-## Session Start Checklist
-1. If snapshot is >1 day old: `argus snapshot . -o .argus/snapshot.txt`
-2. Read ARCHITECTURE.md for context
 ```
 
 ### "What if Claude built something but I forgot to update the snapshot?"
@@ -152,39 +141,51 @@ argus analyze .argus/snapshot.txt "What modules exist? List all with brief descr
 
 ### "How do I use this with Claude Code specifically?"
 
-Add this to your project's `CLAUDE.md`:
-
-```markdown
-## Codebase Intelligence (Argus)
-
-### CRITICAL: After Compaction
-DO NOT re-scan the entire codebase. Instead:
-1. Read ARCHITECTURE.md for overview
-2. Query Argus for specific questions
-3. Use `argus search` for finding files
-
-### Commands
-- `argus analyze .argus/snapshot.txt "your question"`
-- `argus search .argus/snapshot.txt "pattern"` (free, no AI)
-
-### Keep Updated
-After completing a major feature:
-\`\`\`bash
-argus snapshot . -o .argus/snapshot.txt
-\`\`\`
+**One-time setup:**
+```bash
+argus init           # Configure your API provider
+argus mcp install    # Installs MCP + global CLAUDE.md injection
 ```
+
+**Per-project setup:**
+```bash
+cd your-project
+argus setup .        # Creates snapshot + updates .gitignore
+```
+
+That's it! The `mcp install` command automatically injects Argus awareness into your global `~/.claude/CLAUDE.md`, which applies to ALL projects and ALL sub-agents.
+
+### "Do I need to modify my agent files?"
+
+**No!** The global injection means:
+- ALL sub-agents (coders, testers, reviewers, debuggers, etc.) inherit Argus awareness
+- New agents you install automatically know about Argus
+- Works with any skill or agent ecosystem (50,000+ and counting)
+
+You don't need to touch individual agent files like `coder.md` or `reviewer.md`.
 
 ### "Can Claude Code run Argus automatically?"
 
-Yes! Install as MCP server:
-```bash
-argus mcp install
-```
-
-Then Claude Code has these tools:
-- `analyze_codebase` - AI-powered questions
-- `search_codebase` - Fast grep (free)
+Yes! After `argus mcp install`, Claude Code has these tools:
+- `analyze_codebase` - AI-powered questions (~500 tokens)
+- `search_codebase` - Fast grep (**FREE**, no AI)
 - `create_snapshot` - Refresh the snapshot
+
+The global CLAUDE.md instructions tell Claude to use `search_codebase` before reading 3+ files, saving massive amounts of tokens.
+
+### "What if sub-agents are still reading many files?"
+
+1. Verify the global injection exists:
+   ```bash
+   grep "Codebase Intelligence (Argus)" ~/.claude/CLAUDE.md
+   ```
+
+2. Verify the snapshot exists:
+   ```bash
+   ls -la .argus/snapshot.txt
+   ```
+
+3. Restart Claude Code to pick up CLAUDE.md changes
 
 ---
 

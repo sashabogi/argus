@@ -1,106 +1,125 @@
-# Argus Integration for CLAUDE.md
+# Argus Integration with Claude Code
 
-Add this section to your project's CLAUDE.md to help Claude Code maintain understanding across context compactions.
+Argus integrates with Claude Code at **two levels** to ensure all agents (main session AND sub-agents) use efficient codebase exploration.
 
----
+## How Integration Works
 
-## Codebase Intelligence (Argus)
+### Level 1: Global (All Projects, All Agents)
 
-This project uses **Argus** for persistent codebase understanding that survives context compaction.
+When you run `argus mcp install`, it:
 
-### Why This Matters
+1. Installs the MCP server for Claude Code
+2. Injects instructions into `~/.claude/CLAUDE.md` (global)
 
-When Claude Code runs out of context or you restart a session, it loses all understanding of your codebase. Instead of re-scanning hundreds of files (which wastes tokens and time), use Argus to query what you need.
+The global instructions apply to **every project** and **every sub-agent** regardless of type (coder, tester, reviewer, debugger, or any custom agent). This means:
 
-### Setup (One Time)
+- New agents you install automatically inherit Argus awareness
+- Works with any skill or agent ecosystem
+- No need to modify individual agent files
+
+### Level 2: Per-Project (Snapshot)
+
+When you run `argus setup .` in a project, it:
+
+1. Creates `.argus/snapshot.txt` (compressed codebase)
+2. Adds `.argus/` to `.gitignore`
+3. Optionally injects project-specific instructions into the project's `CLAUDE.md`
+
+## Quick Start
 
 ```bash
-# Install Argus globally
-npm install -g @hive-dev/argus
+# One-time global setup
+argus init           # Configure API key
+argus mcp install    # MCP server + global CLAUDE.md injection
 
-# Or from source
-git clone git@github.com:sashabogi/argus.git
-cd argus && npm install && npm run build && npm link
+# Per-project setup
+cd your-project
+argus setup .        # Creates snapshot + updates .gitignore
+```
 
-# Configure with your LLM provider
-argus init
+That's it! Claude Code and all sub-agents will now:
+1. Check for `.argus/snapshot.txt` before multi-file exploration
+2. Use `search_codebase` (FREE) to find relevant files
+3. Only read the specific files needed
 
-# Create initial snapshot
+## What Gets Injected
+
+### Global `~/.claude/CLAUDE.md`
+
+```markdown
+## Codebase Intelligence (Argus) — ALL AGENTS
+
+> This applies to the main session AND all sub-agents/tasks regardless of type.
+
+### The Rule: Argus Before Multi-File Exploration
+
+Before reading more than 3 files to understand a codebase, use Argus MCP tools:
+
+1. Check for snapshot: Look for `.argus/snapshot.txt` in the project
+2. Search first (FREE): `search_codebase(".argus/snapshot.txt", "pattern")`
+3. Understand if needed (~500 tokens): `analyze_codebase(".argus/snapshot.txt", "How does X work?")`
+4. Then read specific files: Only the files Argus identified as relevant
+```
+
+## Available MCP Tools
+
+| Tool | Cost | Use For |
+|------|------|---------|
+| `search_codebase` | **FREE** | Finding files, patterns, definitions |
+| `analyze_codebase` | ~500 tokens | Architecture questions, understanding flows |
+| `create_snapshot` | ~100 tokens | Refreshing the snapshot after major changes |
+
+## Keeping Snapshots Updated
+
+```bash
+# Check if snapshot is stale
+argus status .
+
+# Refresh after major changes
 argus snapshot . -o .argus/snapshot.txt
 
-# Generate architecture doc
-argus analyze .argus/snapshot.txt "Generate an architecture overview including all modules, their purposes, key patterns, and important files" > ARCHITECTURE.md
+# Or use the setup command again
+argus setup .
 ```
 
-### Quick Reference
+## Manual Integration (Optional)
 
-| Need | Command |
-|------|---------|
-| Understand architecture | `argus analyze .argus/snapshot.txt "What are the main modules?"` |
-| Find implementation | `argus analyze .argus/snapshot.txt "How does authentication work?"` |
-| Locate files | `argus search .argus/snapshot.txt "FILE:.*auth"` |
-| Count items | `argus analyze .argus/snapshot.txt "How many React components?"` |
-| Refresh snapshot | `argus snapshot . -o .argus/snapshot.txt` |
-
-### When to Use Argus
-
-**USE ARGUS when you:**
-- Just started a new session or had context compacted
-- Are unsure where something is implemented
-- Need to understand how modules connect
-- Want to find patterns across the codebase
-- Need to verify architectural decisions
-
-**DON'T RE-SCAN the entire codebase.** Query Argus instead.
-
-### Example Queries
+If you prefer manual control, you can skip the automatic injection:
 
 ```bash
-# Architecture understanding
-argus analyze .argus/snapshot.txt "What are the main modules and their responsibilities?"
+# Install MCP only, skip global CLAUDE.md
+argus mcp install --no-claude-md
 
-# Find implementations
-argus analyze .argus/snapshot.txt "Where is error handling implemented?"
-
-# Understand patterns  
-argus analyze .argus/snapshot.txt "What design patterns are used in this codebase?"
-
-# Data flow
-argus analyze .argus/snapshot.txt "How does data flow from API to UI?"
-
-# Fast file search (no AI, instant)
-argus search .argus/snapshot.txt "FILE:.*controller"
-argus search .argus/snapshot.txt "async fn.*error"
+# Setup project, skip project CLAUDE.md  
+argus setup . --no-claude-md
 ```
 
-### After Major Changes
+Then manually add the Argus section to your CLAUDE.md files as needed.
 
-When you make significant structural changes, refresh the snapshot:
+## Troubleshooting
 
-```bash
-argus snapshot . -o .argus/snapshot.txt
+### Sub-agents not using Argus?
+
+1. Verify global injection: `grep "Argus" ~/.claude/CLAUDE.md`
+2. Verify snapshot exists: `ls -la .argus/snapshot.txt`
+3. Restart Claude Code to pick up CLAUDE.md changes
+
+### Snapshot too large?
+
+Customize excluded patterns in `~/.argus/config.json`:
+
+```json
+{
+  "defaults": {
+    "excludePatterns": ["node_modules", ".git", "dist", "build", ".next"]
+  }
+}
 ```
 
-### Files
+### Want to use a different snapshot location?
 
-- `.argus/snapshot.txt` - Current codebase snapshot (auto-generated)
-- `ARCHITECTURE.md` - Architecture overview (generated by Argus)
+The tools accept any path. You can store snapshots anywhere:
 
----
-
-## MCP Integration (Claude Desktop / Claude Code)
-
-For seamless integration with Claude:
-
-```bash
-# Install as MCP server
-argus mcp install
-
-# Uninstall
-argus mcp uninstall
 ```
-
-Then in conversations, Claude has access to these tools:
-- `analyze_codebase` - AI-powered analysis
-- `search_codebase` - Fast regex search
-- `create_snapshot` - Generate snapshots
+search_codebase("/path/to/custom-snapshot.txt", "pattern")
+```
