@@ -11,7 +11,7 @@
 
 import { readFileSync } from 'fs';
 import { AIProvider, Message } from '../providers/types.js';
-import { buildSystemPrompt } from './prompts.js';
+import { buildSystemPrompt, getTurnLimit } from './prompts.js';
 
 export interface AnalysisOptions {
   maxTurns?: number;
@@ -338,6 +338,9 @@ export async function analyze(
     onProgress,
   } = options;
   
+  // Use dynamic turn limit based on query type, but cap at maxTurns
+  const dynamicLimit = Math.min(getTurnLimit(query), maxTurns);
+  
   // Load document
   const content = readFileSync(documentPath, 'utf-8');
   
@@ -363,13 +366,17 @@ Files are marked with "FILE: ./path/to/file" headers.
 
 QUERY: ${query}
 
-Begin analysis. Remember: provide a final answer within 10 turns.`,
+Begin analysis. You have ${dynamicLimit} turns maximum - provide final answer before then.`,
     },
   ];
   
-  for (let turn = 1; turn <= maxTurns; turn++) {
+  for (let turn = 1; turn <= dynamicLimit; turn++) {
+    // Force final answer on last turn
+    const isLastTurn = turn === dynamicLimit;
+    const isNearEnd = turn >= dynamicLimit - 2;
+    
     if (verbose) {
-      console.log(`\n[Turn ${turn}/${maxTurns}] Querying LLM...`);
+      console.log(`\n[Turn ${turn}/${dynamicLimit}] Querying LLM...`);
     }
     
     // Get LLM response
@@ -425,9 +432,42 @@ Begin analysis. Remember: provide a final answer within 10 turns.`,
       
       onProgress?.(turn, command, cmdResult);
       
-      // Add to conversation
+      // Add to conversation with nudge if near end
       messages.push({ role: 'assistant', content: command });
-      messages.push({ role: 'user', content: `Result:\n${truncatedResult}` });
+      
+      let userMessage = `Result:\n${truncatedResult}`;
+      if (isNearEnd && !isLastTurn) {
+        userMessage += `\n\n⚠️ ${dynamicLimit - turn} turns remaining. Start forming your final answer.`;
+      }
+      messages.push({ role: 'user', content: userMessage });
+      
+      // FORCE final answer on last turn - make one more LLM call
+      if (isLastTurn) {
+        messages.push({ 
+          role: 'user', 
+          content: 'STOP SEARCHING. Based on everything you found, provide your final answer NOW using <<<FINAL>>>your answer<<<END>>>' 
+        });
+        
+        const finalResult = await provider.complete(messages);
+        const finalExtracted = extractCommand(finalResult.content);
+        
+        if (finalExtracted.finalAnswer) {
+          return {
+            answer: finalExtracted.finalAnswer,
+            turns: turn,
+            commands,
+            success: true,
+          };
+        }
+        
+        // Even if not properly formatted, return whatever we got
+        return {
+          answer: finalResult.content,
+          turns: turn,
+          commands,
+          success: true,
+        };
+      }
       
     } catch (error) {
       const errMsg = error instanceof Error ? error.message : String(error);
@@ -443,7 +483,7 @@ Begin analysis. Remember: provide a final answer within 10 turns.`,
   
   return {
     answer: 'Maximum turns reached without final answer',
-    turns: maxTurns,
+    turns: dynamicLimit,
     commands,
     success: false,
     error: 'Max turns reached',

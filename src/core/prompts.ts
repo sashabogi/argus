@@ -88,17 +88,28 @@ PROVIDE FINAL ANSWER BY TURN 6.
 `;
 
 // Prompt for finding specific implementations
-export const IMPLEMENTATION_PROMPT = `You are finding WHERE something is implemented in the codebase.
+export const IMPLEMENTATION_PROMPT = `You are finding HOW something works in a codebase.
 
 ${NUCLEUS_COMMANDS}
 
 ## STRATEGY
-1. (grep "keyword") - Find mentions
-2. (grep "FILE:.*keyword") - Find relevant files
-3. Look for definition patterns (fn, function, class, struct)
-4. Report file paths and what you found
+1. (grep "FILE:.*keyword") - Find files related to the concept
+2. (grep "keyword") - Find all mentions
+3. (take RESULTS 30) - Limit if too many results
+4. Look for function definitions, structs, classes
+5. PROVIDE FINAL ANSWER based on file paths and code patterns found
 
-PROVIDE FINAL ANSWER BY TURN 5.
+## IMPORTANT
+- You have 12 turns maximum
+- By turn 8, START WRITING YOUR FINAL ANSWER
+- Use what you've found - don't keep searching indefinitely
+- It's better to give a partial answer than no answer
+
+## OUTPUT FORMAT
+Your final answer should explain:
+- Which files contain the implementation
+- Key functions/structs/classes involved  
+- Basic flow of how it works (based on what you found)
 `;
 
 // Prompt for counting/quantifying
@@ -171,8 +182,9 @@ export function getTurnLimit(query: string): number {
   const q = query.toLowerCase();
   
   if (/how many|count/.test(q)) return 5;
-  if (/^(find|search|show|list)\b/.test(q)) return 6;
-  if (/architect|overview|structure/.test(q)) return 10;
+  if (/^(find|search|show|list)\b/.test(q) && q.length < 50) return 6;
+  if (/architect|overview|structure|module/.test(q)) return 12;
+  if (/how does|how is|implement|work/.test(q)) return 12;  // Implementation needs more
   
   return 12; // Default
 }
