@@ -49,6 +49,21 @@ argus init
 argus mcp install
 ```
 
+### Project Setup (One Command)
+
+```bash
+# Set up Argus for any project - creates snapshot, updates CLAUDE.md, adds to .gitignore
+argus setup .
+
+# Or specify a path
+argus setup ~/projects/my-app
+```
+
+This single command:
+1. Creates `.argus/snapshot.txt` with your codebase
+2. Injects instructions into `CLAUDE.md` so Claude Code automatically uses Argus
+3. Adds `.argus/` to `.gitignore`
+
 ### Basic Usage
 
 ```bash
@@ -66,9 +81,6 @@ argus search .argus/snapshot.txt "authentication"
 
 # Check if snapshot needs refresh
 argus status .
-
-# Generate architecture summary for CLAUDE.md
-argus context generate . > ARCHITECTURE.md
 ```
 
 ### In Claude Code

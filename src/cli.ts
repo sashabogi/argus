@@ -5,7 +5,7 @@
  */
 
 import { Command } from 'commander';
-import { existsSync, readFileSync, writeFileSync, statSync, unlinkSync, readdirSync } from 'fs';
+import { existsSync, readFileSync, writeFileSync, statSync, unlinkSync, readdirSync, mkdirSync } from 'fs';
 import { homedir } from 'os';
 import { join, resolve, basename } from 'path';
 import { execSync } from 'child_process';
@@ -776,6 +776,153 @@ function getProviderDescription(provider: ProviderType): string {
     default: return '';
   }
 }
+
+// CLAUDE.md template for project setup
+const CLAUDE_MD_ARGUS_SECTION = `
+## Codebase Intelligence (Argus)
+
+**IMPORTANT: For architecture questions or exploring the codebase, use Argus MCP tools instead of scanning files manually.**
+
+Argus provides efficient codebase analysis that survives context compaction (~500 tokens vs 50,000+).
+
+### Available Tools
+
+| Tool | Use For | Cost |
+|------|---------|------|
+| \`search_codebase\` | Find files, patterns, definitions (use FIRST) | **FREE** |
+| \`analyze_codebase\` | Architecture questions, "how does X work" | ~500 tokens |
+| \`create_snapshot\` | Refresh after major changes | ~100 tokens |
+
+### Workflow
+
+1. **Finding things**: Use \`search_codebase\` with \`.argus/snapshot.txt\` - it's instant and free
+2. **Understanding**: Use \`analyze_codebase\` for architecture questions
+3. **After compaction**: Query Argus instead of re-scanning the codebase
+
+### When to Use Argus vs Native Tools
+
+| Use Argus | Use Native Tools |
+|-----------|------------------|
+| Architecture questions | Quick single-file lookups |
+| "How does X work" | Recent changes in known files |
+| Finding patterns across files | Specific line edits |
+| After context compaction | Running tests/builds |
+
+### Keeping Snapshot Updated
+
+\`\`\`bash
+# Check if snapshot needs refresh
+argus status .
+
+# Refresh after major changes
+argus snapshot . -o .argus/snapshot.txt
+\`\`\`
+`;
+
+// ============================================================================
+// argus setup - One-command project setup
+// ============================================================================
+program
+  .command('setup [path]')
+  .description('Set up Argus for a project (snapshot + CLAUDE.md + .gitignore)')
+  .option('--no-claude-md', 'Skip CLAUDE.md injection')
+  .option('--no-gitignore', 'Skip .gitignore update')
+  .action((path: string | undefined, opts) => {
+    const projectPath = path ? resolve(path) : process.cwd();
+    
+    console.log('🚀 Setting up Argus for project...\n');
+    console.log(`   Project: ${projectPath}\n`);
+    
+    // 1. Create .argus directory
+    const argusDir = join(projectPath, '.argus');
+    if (!existsSync(argusDir)) {
+      mkdirSync(argusDir, { recursive: true });
+      console.log('✅ Created .argus/ directory');
+    } else {
+      console.log('✓  .argus/ directory exists');
+    }
+    
+    // 2. Create snapshot
+    const snapshotPath = join(argusDir, 'snapshot.txt');
+    console.log('\n📸 Creating codebase snapshot...');
+    
+    const config = loadConfig();
+    const result = createSnapshot(projectPath, snapshotPath, {
+      extensions: config.defaults.snapshotExtensions,
+      excludePatterns: config.defaults.excludePatterns,
+    });
+    
+    console.log(`✅ Snapshot created: ${result.fileCount} files, ${result.totalLines.toLocaleString()} lines`);
+    
+    // 3. Update .gitignore
+    if (opts.gitignore !== false) {
+      const gitignorePath = join(projectPath, '.gitignore');
+      let gitignoreContent = '';
+      
+      if (existsSync(gitignorePath)) {
+        gitignoreContent = readFileSync(gitignorePath, 'utf-8');
+      }
+      
+      if (!gitignoreContent.includes('.argus')) {
+        const addition = gitignoreContent.endsWith('\n') ? '' : '\n';
+        writeFileSync(gitignorePath, gitignoreContent + addition + '\n# Argus codebase intelligence\n.argus/\n');
+        console.log('✅ Added .argus/ to .gitignore');
+      } else {
+        console.log('✓  .argus/ already in .gitignore');
+      }
+    }
+    
+    // 4. Inject CLAUDE.md instructions
+    if (opts.claudeMd !== false) {
+      const claudeMdPath = join(projectPath, 'CLAUDE.md');
+      
+      if (existsSync(claudeMdPath)) {
+        let claudeMdContent = readFileSync(claudeMdPath, 'utf-8');
+        
+        if (claudeMdContent.includes('Codebase Intelligence (Argus)')) {
+          console.log('✓  CLAUDE.md already has Argus section');
+        } else {
+          // Find a good place to inject - after first heading or at end
+          const firstHeadingMatch = claudeMdContent.match(/^#[^#].*$/m);
+          if (firstHeadingMatch && firstHeadingMatch.index !== undefined) {
+            // Find the end of the first section (next heading or significant break)
+            const afterFirstHeading = claudeMdContent.indexOf('\n## ', firstHeadingMatch.index + 1);
+            if (afterFirstHeading > 0) {
+              // Insert before the second major section
+              claudeMdContent = 
+                claudeMdContent.slice(0, afterFirstHeading) + 
+                '\n' + CLAUDE_MD_ARGUS_SECTION + '\n' +
+                claudeMdContent.slice(afterFirstHeading);
+            } else {
+              // Append at end
+              claudeMdContent += '\n' + CLAUDE_MD_ARGUS_SECTION;
+            }
+          } else {
+            // No headings found, append at end
+            claudeMdContent += '\n' + CLAUDE_MD_ARGUS_SECTION;
+          }
+          
+          writeFileSync(claudeMdPath, claudeMdContent);
+          console.log('✅ Added Argus section to CLAUDE.md');
+        }
+      } else {
+        // Create new CLAUDE.md with Argus section
+        const newClaudeMd = `# Project Intelligence
+
+This project uses Argus for efficient codebase analysis.
+${CLAUDE_MD_ARGUS_SECTION}`;
+        
+        writeFileSync(claudeMdPath, newClaudeMd);
+        console.log('✅ Created CLAUDE.md with Argus section');
+      }
+    }
+    
+    console.log('\n🎉 Argus setup complete!\n');
+    console.log('Next steps:');
+    console.log('  1. Restart Claude Code to pick up CLAUDE.md changes');
+    console.log('  2. Ask Claude about your codebase architecture');
+    console.log('  3. Run `argus status` periodically to check if snapshot needs refresh');
+  });
 
 // Run
 program.parse();
