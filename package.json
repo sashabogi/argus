@@ -1,0 +1,68 @@
+{
+  "name": "@hive-dev/argus",
+  "version": "1.0.0",
+  "description": "Codebase Intelligence Beyond Context Limits - AI-powered analysis for entire projects",
+  "main": "dist/index.js",
+  "module": "dist/index.mjs",
+  "types": "dist/index.d.ts",
+  "bin": {
+    "argus": "dist/cli.js",
+    "argus-mcp": "dist/mcp.js"
+  },
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "lint": "eslint src/",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": [
+    "ai",
+    "llm",
+    "codebase",
+    "analysis",
+    "mcp",
+    "claude",
+    "code-intelligence",
+    "rlm",
+    "recursive-language-model"
+  ],
+  "author": "Hive Development",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/hive-dev/argus.git"
+  },
+  "bugs": {
+    "url": "https://github.com/hive-dev/argus/issues"
+  },
+  "homepage": "https://github.com/hive-dev/argus#readme",
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.52.0",
+    "chalk": "^5.3.0",
+    "commander": "^12.1.0",
+    "dotenv": "^16.4.5",
+    "inquirer": "^9.2.23",
+    "node-fetch": "^3.3.2",
+    "openai": "^4.58.0",
+    "ora": "^8.0.1"
+  },
+  "devDependencies": {
+    "@types/inquirer": "^9.0.7",
+    "@types/node": "^20.14.0",
+    "eslint": "^9.5.0",
+    "tsup": "^8.1.0",
+    "typescript": "^5.5.0",
+    "vitest": "^2.1.0"
+  }
+}

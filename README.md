@@ -1,0 +1,221 @@
+# Argus
+
+**Codebase Intelligence Beyond Context Limits**
+
+Argus is an AI-powered codebase analysis tool that understands your entire project, regardless of size. It provides intelligent answers about code architecture, patterns, and relationships that would be impossible with traditional context-limited approaches.
+
+## Acknowledgments
+
+Argus builds upon and extends the innovative work of [Matryoshka RLM](https://github.com/yogthos/Matryoshka) by [Dmitri Sotnikov (yogthos)](https://github.com/yogthos). 
+
+The Matryoshka project introduced the brilliant concept of **Recursive Language Models (RLM)** - using an LLM to generate symbolic commands (via the [Nucleus DSL](https://github.com/michaelwhitford/nucleus)) that are executed against documents, enabling analysis of files far exceeding context window limits. This approach achieves **93% token savings** compared to traditional methods.
+
+**What Argus adds:**
+
+| Matryoshka | Argus |
+|------------|-------|
+| Single file analysis | Full codebase analysis |
+| CLI-only | CLI + MCP Server for Claude Code |
+| Ollama/DeepSeek providers | Multi-provider (ZAI, Anthropic, OpenAI, Ollama, DeepSeek) |
+| Manual configuration | Interactive setup wizard |
+| Document-focused | Code-aware with snapshot generation |
+
+We encourage you to explore the original [Matryoshka](https://github.com/yogthos/Matryoshka) project and the [RLM research paper](https://arxiv.org/abs/2512.24601) that inspired this approach.
+
+---
+
+## Features
+
+- 🔍 **Codebase-Wide Analysis** - Analyze entire projects, not just single files
+- 🧠 **AI-Powered Understanding** - Uses LLMs to reason about code structure and patterns
+- 🔌 **MCP Integration** - Works seamlessly with Claude Code
+- 🌐 **Multi-Provider Support** - ZAI GLM-4.7, Claude, GPT-4, DeepSeek, Ollama
+- 📸 **Smart Snapshots** - Intelligent codebase snapshots optimized for analysis
+- ⚡ **Hybrid Search** - Fast grep + AI reasoning for optimal results
+- 🔧 **Easy Setup** - Interactive configuration wizard
+
+## Quick Start
+
+### Installation
+
+```bash
+# Install globally
+npm install -g @hive-dev/argus
+
+# Interactive setup (configures API keys and preferences)
+argus init
+
+# Add to Claude Code
+argus mcp install
+```
+
+### Basic Usage
+
+```bash
+# Analyze a codebase
+argus analyze ./my-project "What are the main architectural patterns?"
+
+# Create a snapshot for repeated analysis
+argus snapshot ./my-project -o ./project-snapshot.txt
+
+# Query an existing snapshot
+argus query ./project-snapshot.txt "Find all API endpoints"
+
+# Fast grep search (no AI, instant results)
+argus search ./project-snapshot.txt "authentication"
+```
+
+### In Claude Code
+
+After running `argus mcp install`, you can use Argus directly:
+
+```
+@argus What are the main modules in this codebase?
+@argus Find all error handling patterns
+@argus How does the authentication flow work?
+```
+
+## Configuration
+
+Argus stores configuration in `~/.argus/config.json`. Run `argus init` for interactive setup, or configure manually:
+
+```json
+{
+  "provider": "zai",
+  "providers": {
+    "zai": {
+      "apiKey": "your-api-key",
+      "model": "glm-4.7",
+      "endpoint": "https://api.z.ai/api/coding/paas/v4"
+    },
+    "anthropic": {
+      "apiKey": "your-api-key",
+      "model": "claude-sonnet-4-20250514"
+    },
+    "openai": {
+      "apiKey": "your-api-key",
+      "model": "gpt-4o"
+    },
+    "deepseek": {
+      "apiKey": "your-api-key",
+      "model": "deepseek-chat"
+    },
+    "ollama": {
+      "baseUrl": "http://localhost:11434",
+      "model": "qwen2.5-coder:7b"
+    }
+  },
+  "defaults": {
+    "maxTurns": 15,
+    "turnTimeoutMs": 60000,
+    "snapshotExtensions": ["ts", "tsx", "js", "jsx", "rs", "py", "go", "java"]
+  }
+}
+```
+
+## Commands
+
+### `argus init`
+Interactive setup wizard. Configures your preferred AI provider and API keys.
+
+### `argus analyze <path> <query>`
+Analyze a codebase or file with an AI-powered query.
+
+Options:
+- `--provider, -p` - Override default provider
+- `--max-turns, -t` - Maximum reasoning turns (default: 15)
+- `--verbose, -v` - Show detailed execution logs
+
+### `argus snapshot <path> [output]`
+Create an optimized snapshot of a codebase for analysis.
+
+Options:
+- `--extensions, -e` - File extensions to include (comma-separated)
+- `--exclude` - Patterns to exclude
+- `--output, -o` - Output file path
+
+### `argus query <snapshot> <query>`
+Query an existing snapshot file.
+
+### `argus search <snapshot> <pattern>`
+Fast grep search without AI (instant results).
+
+### `argus mcp install`
+Install Argus as an MCP server for Claude Code.
+
+### `argus mcp uninstall`
+Remove Argus from Claude Code.
+
+### `argus config [key] [value]`
+View or modify configuration.
+
+## How It Works
+
+Argus uses a **Recursive Language Model (RLM)** approach:
+
+1. **Snapshot Creation** - Your codebase is compiled into an optimized text snapshot
+2. **Query Analysis** - The LLM receives your question and the Nucleus DSL reference
+3. **Iterative Exploration** - The LLM generates symbolic commands (grep, filter, map, etc.)
+4. **Command Execution** - Commands run against the full snapshot in a sandbox
+5. **Reasoning Loop** - Results feed back to the LLM for further analysis
+6. **Final Answer** - Once sufficient information is gathered, a comprehensive answer is provided
+
+This allows analysis of codebases **far exceeding** typical context limits (2M+ characters) while using minimal tokens per query.
+
+## Nucleus DSL Reference
+
+Argus uses the [Nucleus DSL](https://github.com/michaelwhitford/nucleus) for document operations:
+
+```lisp
+; Search
+(grep "pattern")                    ; Find matching lines
+(grep "error" "i")                  ; Case-insensitive search
+
+; Transform
+(map RESULTS (lambda (x) ...))      ; Transform results
+(filter RESULTS (lambda (x) ...))   ; Filter results
+(sort RESULTS key)                  ; Sort results
+
+; Aggregate
+(count RESULTS)                     ; Count items
+(sum RESULTS)                       ; Sum numeric values
+(first RESULTS)                     ; Get first item
+(take RESULTS n)                    ; Get first n items
+
+; Extract
+(match str "pattern" group)         ; Regex extraction
+(split str delimiter)               ; Split string
+
+; Final Answer
+<<<FINAL>>>your answer here<<<END>>>
+```
+
+## Supported Providers
+
+| Provider | Models | Best For |
+|----------|--------|----------|
+| **ZAI** | GLM-4.7, GLM-4.6 | Best value, excellent coding |
+| **Anthropic** | Claude Sonnet/Opus | Highest quality reasoning |
+| **OpenAI** | GPT-4o, GPT-4 | General purpose |
+| **DeepSeek** | DeepSeek Chat/Coder | Budget-friendly |
+| **Ollama** | Qwen, CodeLlama, etc. | Free, local, private |
+
+## Requirements
+
+- Node.js 18+
+- npm or pnpm
+- API key for your chosen provider (or Ollama for local)
+
+## License
+
+MIT License - See [LICENSE](./LICENSE)
+
+## Contributing
+
+Contributions are welcome! Please read our contributing guidelines before submitting PRs.
+
+## Related Projects
+
+- [Matryoshka RLM](https://github.com/yogthos/Matryoshka) - The original RLM implementation that inspired Argus
+- [Nucleus DSL](https://github.com/michaelwhitford/nucleus) - The symbolic language used for document operations
+- [RLM Paper](https://arxiv.org/abs/2512.24601) - Academic research on Recursive Language Models

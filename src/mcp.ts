@@ -1,0 +1,340 @@
+#!/usr/bin/env node
+
+/**
+ * Argus MCP Server
+ * 
+ * Model Context Protocol server for Claude Code integration.
+ * Exposes Argus analysis capabilities as MCP tools.
+ */
+
+import { createInterface } from 'readline';
+import { loadConfig, validateConfig } from './core/config.js';
+import { createSnapshot } from './core/snapshot.js';
+import { analyze, searchDocument } from './core/engine.js';
+import { createProvider } from './providers/index.js';
+import { existsSync, statSync, mkdtempSync, writeFileSync, unlinkSync } from 'fs';
+import { tmpdir } from 'os';
+import { join, resolve } from 'path';
+
+// MCP Protocol types
+interface MCPRequest {
+  jsonrpc: '2.0';
+  id: number | string;
+  method: string;
+  params?: unknown;
+}
+
+interface MCPResponse {
+  jsonrpc: '2.0';
+  id: number | string;
+  result?: unknown;
+  error?: {
+    code: number;
+    message: string;
+    data?: unknown;
+  };
+}
+
+// Tool definitions
+const TOOLS = [
+  {
+    name: 'analyze_codebase',
+    description: `Analyze a codebase or file using AI-powered recursive analysis. 
+This tool can understand code structure, find patterns, and answer complex questions 
+about codebases that exceed normal context limits.
+
+Use this for:
+- Understanding code architecture
+- Finding patterns across files
+- Analyzing error handling, authentication, etc.
+- Getting summaries of large projects`,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        path: {
+          type: 'string',
+          description: 'Path to the codebase directory or snapshot file to analyze',
+        },
+        query: {
+          type: 'string',
+          description: 'The question or analysis to perform on the codebase',
+        },
+        maxTurns: {
+          type: 'number',
+          description: 'Maximum reasoning turns (default: 15)',
+        },
+      },
+      required: ['path', 'query'],
+    },
+  },
+  {
+    name: 'search_codebase',
+    description: `Fast regex search across a codebase snapshot. 
+Use this for quick pattern matching without AI reasoning.
+Returns matching lines with line numbers.`,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        path: {
+          type: 'string',
+          description: 'Path to the snapshot file to search',
+        },
+        pattern: {
+          type: 'string',
+          description: 'Regex pattern to search for',
+        },
+        caseInsensitive: {
+          type: 'boolean',
+          description: 'Whether to ignore case (default: false)',
+        },
+        maxResults: {
+          type: 'number',
+          description: 'Maximum results to return (default: 50)',
+        },
+      },
+      required: ['path', 'pattern'],
+    },
+  },
+  {
+    name: 'create_snapshot',
+    description: `Create a snapshot of a codebase for analysis.
+Compiles all source files into a single text file optimized for analysis.`,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        path: {
+          type: 'string',
+          description: 'Path to the codebase directory',
+        },
+        outputPath: {
+          type: 'string',
+          description: 'Where to save the snapshot (default: auto-generated in temp)',
+        },
+        extensions: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'File extensions to include (default: common code extensions)',
+        },
+      },
+      required: ['path'],
+    },
+  },
+];
+
+// State
+let config = loadConfig();
+let provider = validateConfig(config).length === 0 ? createProvider(config) : null;
+
+// Handle tool calls
+async function handleToolCall(name: string, args: Record<string, unknown>): Promise<unknown> {
+  switch (name) {
+    case 'analyze_codebase': {
+      if (!provider) {
+        throw new Error('Argus not configured. Run `argus init` to set up.');
+      }
+      
+      const path = resolve(args.path as string);
+      const query = args.query as string;
+      const maxTurns = (args.maxTurns as number) || 15;
+      
+      if (!existsSync(path)) {
+        throw new Error(`Path not found: ${path}`);
+      }
+      
+      let snapshotPath = path;
+      let tempSnapshot = false;
+      
+      // If it's a directory, create a temporary snapshot
+      const stats = statSync(path);
+      if (stats.isDirectory()) {
+        const tempDir = mkdtempSync(join(tmpdir(), 'argus-'));
+        snapshotPath = join(tempDir, 'snapshot.txt');
+        
+        const result = createSnapshot(path, snapshotPath, {
+          extensions: config.defaults.snapshotExtensions,
+          excludePatterns: config.defaults.excludePatterns,
+        });
+        
+        tempSnapshot = true;
+      }
+      
+      try {
+        const result = await analyze(provider, snapshotPath, query, { maxTurns });
+        
+        return {
+          answer: result.answer,
+          success: result.success,
+          turns: result.turns,
+          commands: result.commands,
+        };
+      } finally {
+        if (tempSnapshot && existsSync(snapshotPath)) {
+          unlinkSync(snapshotPath);
+        }
+      }
+    }
+    
+    case 'search_codebase': {
+      const path = resolve(args.path as string);
+      const pattern = args.pattern as string;
+      const caseInsensitive = args.caseInsensitive as boolean || false;
+      const maxResults = (args.maxResults as number) || 50;
+      
+      if (!existsSync(path)) {
+        throw new Error(`File not found: ${path}`);
+      }
+      
+      const matches = searchDocument(path, pattern, { caseInsensitive, maxResults });
+      
+      return {
+        count: matches.length,
+        matches: matches.map(m => ({
+          lineNum: m.lineNum,
+          line: m.line.trim(),
+          match: m.match,
+        })),
+      };
+    }
+    
+    case 'create_snapshot': {
+      const path = resolve(args.path as string);
+      const outputPath = args.outputPath 
+        ? resolve(args.outputPath as string)
+        : join(tmpdir(), `argus-snapshot-${Date.now()}.txt`);
+      const extensions = args.extensions as string[] || config.defaults.snapshotExtensions;
+      
+      if (!existsSync(path)) {
+        throw new Error(`Path not found: ${path}`);
+      }
+      
+      const result = createSnapshot(path, outputPath, {
+        extensions,
+        excludePatterns: config.defaults.excludePatterns,
+      });
+      
+      return {
+        outputPath: result.outputPath,
+        fileCount: result.fileCount,
+        totalLines: result.totalLines,
+        totalSize: result.totalSize,
+      };
+    }
+    
+    default:
+      throw new Error(`Unknown tool: ${name}`);
+  }
+}
+
+// MCP Protocol handlers
+function handleInitialize(): MCPResponse['result'] {
+  return {
+    protocolVersion: '2024-11-05',
+    capabilities: {
+      tools: {},
+    },
+    serverInfo: {
+      name: 'argus',
+      version: '1.0.0',
+    },
+  };
+}
+
+function handleToolsList(): MCPResponse['result'] {
+  return { tools: TOOLS };
+}
+
+async function handleToolsCall(params: { name: string; arguments: Record<string, unknown> }): Promise<MCPResponse['result']> {
+  try {
+    const result = await handleToolCall(params.name, params.arguments);
+    return {
+      content: [
+        {
+          type: 'text',
+          text: typeof result === 'string' ? result : JSON.stringify(result, null, 2),
+        },
+      ],
+    };
+  } catch (error) {
+    return {
+      content: [
+        {
+          type: 'text',
+          text: `Error: ${error instanceof Error ? error.message : String(error)}`,
+        },
+      ],
+      isError: true,
+    };
+  }
+}
+
+// Main message handler
+async function handleMessage(request: MCPRequest): Promise<MCPResponse> {
+  try {
+    let result: unknown;
+    
+    switch (request.method) {
+      case 'initialize':
+        result = handleInitialize();
+        break;
+      case 'tools/list':
+        result = handleToolsList();
+        break;
+      case 'tools/call':
+        result = await handleToolsCall(request.params as { name: string; arguments: Record<string, unknown> });
+        break;
+      case 'notifications/initialized':
+        // No response needed for notifications
+        return { jsonrpc: '2.0', id: request.id, result: {} };
+      default:
+        return {
+          jsonrpc: '2.0',
+          id: request.id,
+          error: {
+            code: -32601,
+            message: `Method not found: ${request.method}`,
+          },
+        };
+    }
+    
+    return {
+      jsonrpc: '2.0',
+      id: request.id,
+      result,
+    };
+  } catch (error) {
+    return {
+      jsonrpc: '2.0',
+      id: request.id,
+      error: {
+        code: -32603,
+        message: error instanceof Error ? error.message : String(error),
+      },
+    };
+  }
+}
+
+// Start stdio server
+const rl = createInterface({
+  input: process.stdin,
+  output: process.stdout,
+  terminal: false,
+});
+
+rl.on('line', async (line) => {
+  if (!line.trim()) return;
+  
+  try {
+    const request = JSON.parse(line) as MCPRequest;
+    const response = await handleMessage(request);
+    console.log(JSON.stringify(response));
+  } catch (error) {
+    console.log(JSON.stringify({
+      jsonrpc: '2.0',
+      id: null,
+      error: {
+        code: -32700,
+        message: 'Parse error',
+      },
+    }));
+  }
+});
