@@ -6,8 +6,8 @@
   "module": "dist/index.mjs",
   "types": "dist/index.d.ts",
   "bin": {
-    "argus": "dist/cli.js",
-    "argus-mcp": "dist/mcp.js"
+    "argus": "dist/cli.mjs",
+    "argus-mcp": "dist/mcp.mjs"
   },
   "scripts": {
     "build": "tsup",

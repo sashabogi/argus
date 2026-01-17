@@ -1,5 +1,3 @@
-#!/usr/bin/env node
-
 /**
  * Argus MCP Server
  * 
