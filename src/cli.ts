@@ -5,7 +5,7 @@
  */
 
 import { Command } from 'commander';
-import { existsSync, readFileSync, writeFileSync } from 'fs';
+import { existsSync, readFileSync, writeFileSync, statSync, unlinkSync } from 'fs';
 import { homedir } from 'os';
 import { join, resolve, basename } from 'path';
 import { execSync } from 'child_process';
@@ -156,7 +156,7 @@ program
     let snapshotPath = resolvedPath;
     let tempSnapshot = false;
     
-    const stats = require('fs').statSync(resolvedPath);
+    const stats = statSync(resolvedPath);
     if (stats.isDirectory()) {
       console.log('📸 Creating snapshot of codebase...');
       snapshotPath = join(homedir(), '.argus', `temp-${Date.now()}.txt`);
@@ -204,7 +204,7 @@ program
     } finally {
       // Clean up temp snapshot
       if (tempSnapshot && existsSync(snapshotPath)) {
-        require('fs').unlinkSync(snapshotPath);
+        unlinkSync(snapshotPath);
       }
     }
   });
