@@ -33,12 +33,12 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/hive-dev/argus.git"
+    "url": "git+https://github.com/sashabogi/argus.git"
   },
   "bugs": {
-    "url": "https://github.com/hive-dev/argus/issues"
+    "url": "https://github.com/sashabogi/argus/issues"
   },
-  "homepage": "https://github.com/hive-dev/argus#readme",
+  "homepage": "https://github.com/sashabogi/argus#readme",
   "engines": {
     "node": ">=18.0.0"
   },
