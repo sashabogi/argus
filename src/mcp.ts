@@ -33,33 +33,39 @@ interface MCPResponse {
   };
 }
 
-// Tool definitions
+// Tool definitions - descriptions optimized for auto-invocation
 const TOOLS = [
   {
     name: 'analyze_codebase',
-    description: `Analyze a codebase or file using AI-powered recursive analysis. 
-This tool can understand code structure, find patterns, and answer complex questions 
-about codebases that exceed normal context limits.
+    description: `IMPORTANT: Use this tool INSTEAD of reading many files when you need to understand a codebase.
 
-Use this for:
-- Understanding code architecture
-- Finding patterns across files
-- Analyzing error handling, authentication, etc.
-- Getting summaries of large projects`,
+This tool analyzes codebases that are TOO LARGE to fit in context. It uses recursive AI reasoning 
+to answer questions about code architecture, patterns, and relationships across hundreds of files.
+
+AUTOMATICALLY USE THIS WHEN:
+- User asks about codebase architecture, structure, or "how does X work"
+- You would need to read more than 10-15 files to answer a question
+- Context was recently compacted and you lost codebase knowledge
+- User asks to find patterns, conventions, or implementations across the codebase
+- You need to understand module relationships or dependencies
+
+This is MORE EFFICIENT than reading files individually - it uses ~500 tokens instead of 50,000+.
+
+If a .argus/snapshot.txt exists, use that path. Otherwise, pass the project directory.`,
     inputSchema: {
       type: 'object',
       properties: {
         path: {
           type: 'string',
-          description: 'Path to the codebase directory or snapshot file to analyze',
+          description: 'Path to .argus/snapshot.txt if it exists, otherwise the codebase directory',
         },
         query: {
           type: 'string',
-          description: 'The question or analysis to perform on the codebase',
+          description: 'The question about the codebase (be specific for best results)',
         },
         maxTurns: {
           type: 'number',
-          description: 'Maximum reasoning turns (default: 15)',
+          description: 'Maximum reasoning turns (default: 15, use 5 for simple counts)',
         },
       },
       required: ['path', 'query'],
@@ -67,15 +73,22 @@ Use this for:
   },
   {
     name: 'search_codebase',
-    description: `Fast regex search across a codebase snapshot. 
-Use this for quick pattern matching without AI reasoning.
-Returns matching lines with line numbers.`,
+    description: `Fast regex search across a codebase - ZERO AI cost, instant results.
+
+Use this BEFORE analyze_codebase when you need to:
+- Find where something is defined (function, class, variable)
+- Locate files containing a pattern
+- Count occurrences of something
+- Find all imports/exports of a module
+
+Requires a snapshot file. If .argus/snapshot.txt exists, use that.
+Returns matching lines with line numbers - much faster than grep across many files.`,
     inputSchema: {
       type: 'object',
       properties: {
         path: {
           type: 'string',
-          description: 'Path to the snapshot file to search',
+          description: 'Path to the snapshot file (.argus/snapshot.txt)',
         },
         pattern: {
           type: 'string',
@@ -95,8 +108,15 @@ Returns matching lines with line numbers.`,
   },
   {
     name: 'create_snapshot',
-    description: `Create a snapshot of a codebase for analysis.
-Compiles all source files into a single text file optimized for analysis.`,
+    description: `Create a codebase snapshot for analysis. Run this ONCE per project, then use the snapshot for all queries.
+
+The snapshot compiles all source files into a single optimized file that survives context compaction.
+Store at .argus/snapshot.txt so other tools can find it.
+
+Run this when:
+- Starting work on a new project
+- .argus/snapshot.txt doesn't exist
+- Codebase has significantly changed since last snapshot`,
     inputSchema: {
       type: 'object',
       properties: {
@@ -106,7 +126,7 @@ Compiles all source files into a single text file optimized for analysis.`,
         },
         outputPath: {
           type: 'string',
-          description: 'Where to save the snapshot (default: auto-generated in temp)',
+          description: 'Where to save (recommend: .argus/snapshot.txt)',
         },
         extensions: {
           type: 'array',
