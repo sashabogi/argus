@@ -205,122 +205,18 @@ function countLines(filePath: string, fs: typeof import('fs')): number {
 /**
  * Interactive Global Onboarding
  * Called during `argus mcp install` first run
+ * Uses ink-based wizard UI for a clean, tabbed interface
  */
 export async function runGlobalOnboarding(): Promise<OnboardingConfig> {
-  const inquirer = await import('inquirer');
+  // Use the ink-based wizard UI
+  const { renderGlobalOnboarding } = await import('./onboarding-ui.js');
   
-  console.log('\n🔮 Welcome to Argus!\n');
-  console.log('Let\'s configure Argus to match your workflow.\n');
+  const config = await renderGlobalOnboarding();
   
-  // Step 1: Experience Level
-  const { experienceLevel } = await inquirer.default.prompt([
-    {
-      type: 'list',
-      name: 'experienceLevel',
-      message: 'How would you describe your experience with Claude Code?',
-      choices: [
-        {
-          name: 'Beginner - I let Claude do most of the work (auto-setup, minimal questions)',
-          value: 'beginner',
-        },
-        {
-          name: 'Intermediate - I guide Claude but trust its decisions (smart defaults with confirmation)',
-          value: 'intermediate',
-        },
-        {
-          name: 'Expert - I have specific workflows and naming conventions (full control)',
-          value: 'expert',
-        },
-      ],
-    },
-  ]);
-  
-  // For beginners, use defaults
-  if (experienceLevel === 'beginner') {
-    console.log('\n✅ Using automatic defaults:');
-    console.log('   • Track: STATUS, README, TODO (auto-detect)');
-    console.log('   • Snapshot: auto-refresh when stale');
-    console.log('   • Context restore: automatic after compaction');
-    console.log('\nYou can change these later with `argus config`');
-    
-    return {
-      ...DEFAULT_ONBOARDING_CONFIG,
-      experienceLevel: 'beginner',
-    };
-  }
-  
-  // Step 2: Key File Patterns (Intermediate/Expert)
-  const patternChoices = COMMON_KEY_FILE_PATTERNS.map(p => ({
-    name: `${p.pattern} - ${p.description}`,
-    value: p.pattern,
-    checked: p.default,
-  }));
-  
-  const { selectedPatterns, customPatterns } = await inquirer.default.prompt([
-    {
-      type: 'checkbox',
-      name: 'selectedPatterns',
-      message: 'Which file patterns should Argus consider "key" files?',
-      choices: patternChoices,
-      when: () => true,
-    },
-    {
-      type: 'input',
-      name: 'customPatterns',
-      message: 'Custom patterns (comma-separated, e.g., "development-notes*, .plan"):',
-      default: '',
-      when: () => experienceLevel === 'expert',
-    },
-  ]);
-  
-  const globalKeyPatterns = [
-    ...selectedPatterns,
-    ...(customPatterns ? customPatterns.split(',').map((p: string) => p.trim()).filter(Boolean) : []),
-  ];
-  
-  // Step 3: Auto-behaviors (Expert only)
-  let autoBehaviors = DEFAULT_ONBOARDING_CONFIG.autoBehaviors;
-  
-  if (experienceLevel === 'expert') {
-    const behaviors = await inquirer.default.prompt([
-      {
-        type: 'confirm',
-        name: 'refreshStaleSnapshots',
-        message: 'Auto-refresh snapshots when they become stale?',
-        default: true,
-      },
-      {
-        type: 'confirm',
-        name: 'contextRestoreOnCompact',
-        message: 'Auto-restore context after compaction using key files?',
-        default: true,
-      },
-      {
-        type: 'list',
-        name: 'trackNewKeyFiles',
-        message: 'When new potential key files are detected:',
-        choices: [
-          { name: 'Track automatically', value: 'auto' },
-          { name: 'Ask me each time', value: 'ask' },
-          { name: 'Ignore (I\'ll add manually)', value: 'manual' },
-        ],
-        default: 'ask',
-      },
-    ]);
-    
-    autoBehaviors = behaviors;
-  }
-  
-  const config: OnboardingConfig = {
-    experienceLevel,
-    globalKeyPatterns,
-    autoBehaviors,
-    projects: {},
-  };
-  
+  // Show completion summary
   console.log('\n✅ Onboarding complete!');
-  console.log(`   Experience level: ${experienceLevel}`);
-  console.log(`   Key patterns: ${globalKeyPatterns.join(', ')}`);
+  console.log(`   Experience level: ${config.experienceLevel}`);
+  console.log(`   Key patterns: ${config.globalKeyPatterns.join(', ')}`);
   
   return config;
 }
@@ -328,6 +224,7 @@ export async function runGlobalOnboarding(): Promise<OnboardingConfig> {
 /**
  * Interactive Project Onboarding
  * Called during `argus setup .` to configure project-specific settings
+ * Uses ink-based wizard UI for a clean, tabbed interface
  */
 export async function runProjectOnboarding(
   projectPath: string,
@@ -335,8 +232,6 @@ export async function runProjectOnboarding(
   fs: typeof import('fs'),
   path: typeof import('path')
 ): Promise<ProjectOnboardingConfig> {
-  const inquirer = await import('inquirer');
-  
   const projectName = path.basename(projectPath);
   
   console.log(`\n📂 Scanning project: ${projectName}\n`);
@@ -344,7 +239,7 @@ export async function runProjectOnboarding(
   // Detect potential key files
   const detected = detectPotentialKeyFiles(projectPath, globalConfig.globalKeyPatterns, fs, path);
   
-  // For beginners, auto-select pattern matches
+  // For beginners, auto-select pattern matches (no wizard)
   if (globalConfig.experienceLevel === 'beginner') {
     const autoSelected = detected
       .filter(d => d.matchedPattern)
@@ -364,86 +259,21 @@ export async function runProjectOnboarding(
     };
   }
   
-  // For intermediate/expert, show detected files for confirmation
-  if (detected.length === 0) {
-    console.log('ℹ️  No potential key files detected\n');
-    
-    if (globalConfig.experienceLevel === 'expert') {
-      const { manualFiles } = await inquirer.default.prompt([
-        {
-          type: 'input',
-          name: 'manualFiles',
-          message: 'Enter key file paths manually (comma-separated):',
-          default: '',
-        },
-      ]);
-      
-      return {
-        keyFiles: manualFiles ? manualFiles.split(',').map((f: string) => f.trim()).filter(Boolean) : [],
-        customPatterns: [],
-        lastScanDate: new Date().toISOString(),
-      };
-    }
-    
-    return {
-      keyFiles: [],
-      customPatterns: [],
-      lastScanDate: new Date().toISOString(),
-    };
+  // For intermediate/expert, use the ink wizard
+  const { renderProjectOnboarding } = await import('./onboarding-ui.js');
+  
+  const config = await renderProjectOnboarding(
+    projectName,
+    detected,
+    globalConfig.globalKeyPatterns,
+    globalConfig.experienceLevel
+  );
+  
+  if (config.keyFiles.length > 0) {
+    console.log(`\n✅ Tracking ${config.keyFiles.length} key file(s)`);
   }
   
-  // Build choices for selection
-  const patternMatches = detected.filter(d => d.matchedPattern);
-  const otherDetected = detected.filter(d => !d.matchedPattern);
-  
-  const choices: Array<{ name: string; value: string; checked: boolean }> = [];
-  
-  if (patternMatches.length > 0) {
-    choices.push(new inquirer.default.Separator('── Matches your global patterns ──') as any);
-    patternMatches.forEach(d => {
-      choices.push({
-        name: `${d.path} (${d.lines} lines) - ${d.reason}`,
-        value: d.path,
-        checked: true, // Auto-select pattern matches
-      });
-    });
-  }
-  
-  if (otherDetected.length > 0) {
-    choices.push(new inquirer.default.Separator('── Additional files that look significant ──') as any);
-    otherDetected.slice(0, 10).forEach(d => { // Limit to 10 suggestions
-      choices.push({
-        name: `${d.path} (${d.lines} lines) - ${d.reason}`,
-        value: d.path,
-        checked: false,
-      });
-    });
-  }
-  
-  const { selectedFiles, customPatterns } = await inquirer.default.prompt([
-    {
-      type: 'checkbox',
-      name: 'selectedFiles',
-      message: 'Select key files for this project:',
-      choices,
-      pageSize: 15,
-    },
-    {
-      type: 'input',
-      name: 'customPatterns',
-      message: 'Project-specific patterns (comma-separated):',
-      default: '',
-      when: () => globalConfig.experienceLevel === 'expert',
-    },
-  ]);
-  
-  return {
-    keyFiles: selectedFiles,
-    customPatterns: customPatterns 
-      ? customPatterns.split(',').map((p: string) => p.trim()).filter(Boolean) 
-      : [],
-    lastScanDate: new Date().toISOString(),
-  };
+  return config;
 }
 
 /**
