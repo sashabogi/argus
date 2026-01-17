@@ -7,6 +7,7 @@
  * - › for current selection
  * - Footer with keyboard hints
  * - No boxes or borders, just spacing
+ * - CONSISTENT controls: Space/Enter both work everywhere
  */
 
 import React, { useState, useCallback } from 'react';
@@ -42,13 +43,14 @@ function TabBar({ tabs, activeIndex }: TabBarProps) {
 
 interface SelectItemProps {
   label: string;
+  value?: string;  // For displaying current value (bold + cyan)
   description?: string;
   isSelected: boolean;
   isCurrent: boolean;
   isMulti?: boolean;
 }
 
-function SelectItem({ label, description, isSelected, isCurrent, isMulti = false }: SelectItemProps) {
+function SelectItem({ label, value, description, isSelected, isCurrent, isMulti = false }: SelectItemProps) {
   const indicator = isMulti 
     ? (isSelected ? '●' : '○')
     : (isSelected ? '●' : '○');
@@ -61,6 +63,9 @@ function SelectItem({ label, description, isSelected, isCurrent, isMulti = false
         </Text>
         <Text color={isSelected ? 'cyan' : 'gray'}>{indicator} </Text>
         <Text bold={isCurrent}>{label}</Text>
+        {value && (
+          <Text bold color="cyan"> {value}</Text>
+        )}
       </Box>
       {description && (
         <Box marginLeft={4}>
@@ -123,43 +128,6 @@ function GlobalWizard({ onComplete }: GlobalWizardProps) {
   const tabs = getTabs();
   const tabIndex = tabs.indexOf(activeTab);
   
-  // Get items for current tab
-  const getItems = useCallback(() => {
-    switch (activeTab) {
-      case 'experience':
-        return [
-          { id: 'beginner', label: 'Beginner', desc: 'Auto-setup, minimal questions' },
-          { id: 'intermediate', label: 'Intermediate', desc: 'Smart defaults with confirmation' },
-          { id: 'expert', label: 'Expert', desc: 'Full control over all settings' },
-        ];
-      case 'patterns':
-        return [
-          ...COMMON_KEY_FILE_PATTERNS.map(p => ({
-            id: p.pattern,
-            label: p.pattern,
-            desc: p.description,
-            multi: true,
-          })),
-          { id: '_custom', label: 'Custom patterns...', desc: customPatterns || 'Add your own patterns', multi: false },
-        ];
-      case 'behaviors':
-        return [
-          { id: 'refresh', label: `Auto-refresh snapshots: ${refreshStale ? 'Yes' : 'No'}`, desc: 'Refresh when snapshots become stale' },
-          { id: 'context', label: `Context restore: ${contextRestore ? 'Yes' : 'No'}`, desc: 'Auto-restore after compaction' },
-          { id: 'track', label: `New key files: ${trackNew}`, desc: 'When new potential key files detected' },
-        ];
-      case 'confirm':
-        return [
-          { id: 'confirm', label: 'Confirm and continue', desc: 'Save settings and install MCP server' },
-          { id: 'back', label: 'Go back', desc: 'Review settings' },
-        ];
-      default:
-        return [];
-    }
-  }, [activeTab, customPatterns, refreshStale, contextRestore, trackNew]);
-  
-  const items = getItems();
-  
   // Handle completion
   const handleComplete = useCallback(() => {
     const allPatterns = [
@@ -194,7 +162,7 @@ function GlobalWizard({ onComplete }: GlobalWizardProps) {
     }
     
     // Tab navigation
-    if (key.tab) {
+    if (key.tab && !isEditingCustom) {
       const newIndex = key.shift 
         ? (tabIndex - 1 + tabs.length) % tabs.length
         : (tabIndex + 1) % tabs.length;
@@ -215,58 +183,83 @@ function GlobalWizard({ onComplete }: GlobalWizardProps) {
       return;
     }
     
+    // Get current items count
+    const getItemCount = () => {
+      switch (activeTab) {
+        case 'experience': return 3;
+        case 'patterns': return COMMON_KEY_FILE_PATTERNS.length + 1; // +1 for custom
+        case 'behaviors': return 3;
+        case 'confirm': return 2;
+        default: return 0;
+      }
+    };
+    
     // List navigation
     if (key.upArrow) {
       setCursorIndex(prev => Math.max(0, prev - 1));
       return;
     }
     if (key.downArrow) {
-      setCursorIndex(prev => Math.min(items.length - 1, prev + 1));
+      setCursorIndex(prev => Math.min(getItemCount() - 1, prev + 1));
       return;
     }
     
-    // Selection
+    // Selection - BOTH Space and Enter work everywhere for consistency
     if (key.return || input === ' ') {
-      const item = items[cursorIndex];
-      if (!item) return;
-      
       switch (activeTab) {
-        case 'experience':
-          setExperienceLevel(item.id as ExperienceLevel);
-          // Auto-advance to next tab
-          const newTabs = item.id === 'beginner' 
-            ? ['experience', 'confirm'] 
-            : item.id === 'intermediate'
-            ? ['experience', 'patterns', 'confirm']
-            : ['experience', 'patterns', 'behaviors', 'confirm'];
-          setActiveTab(newTabs[1] as GlobalTab);
-          setCursorIndex(0);
-          break;
-          
-        case 'patterns':
-          if (item.id === '_custom') {
-            setIsEditingCustom(true);
-          } else {
-            setSelectedPatterns(prev => {
-              const next = new Set(prev);
-              if (next.has(item.id)) {
-                next.delete(item.id);
-              } else {
-                next.add(item.id);
-              }
-              return next;
-            });
+        case 'experience': {
+          const levels: ExperienceLevel[] = ['beginner', 'intermediate', 'expert'];
+          const selected = levels[cursorIndex];
+          if (selected) {
+            setExperienceLevel(selected);
+            // Auto-advance to next tab
+            const newTabs = selected === 'beginner' 
+              ? ['experience', 'confirm'] 
+              : selected === 'intermediate'
+              ? ['experience', 'patterns', 'confirm']
+              : ['experience', 'patterns', 'behaviors', 'confirm'];
+            setActiveTab(newTabs[1] as GlobalTab);
+            setCursorIndex(0);
           }
           break;
+        }
           
-        case 'behaviors':
-          if (item.id === 'refresh') setRefreshStale(!refreshStale);
-          else if (item.id === 'context') setContextRestore(!contextRestore);
-          else if (item.id === 'track') setTrackNew(trackNew === 'auto' ? 'ask' : trackNew === 'ask' ? 'manual' : 'auto');
+        case 'patterns': {
+          const isCustom = cursorIndex === COMMON_KEY_FILE_PATTERNS.length;
+          if (isCustom) {
+            setIsEditingCustom(true);
+          } else {
+            const pattern = COMMON_KEY_FILE_PATTERNS[cursorIndex];
+            if (pattern) {
+              setSelectedPatterns(prev => {
+                const next = new Set(prev);
+                if (next.has(pattern.pattern)) {
+                  next.delete(pattern.pattern);
+                } else {
+                  next.add(pattern.pattern);
+                }
+                return next;
+              });
+            }
+          }
           break;
+        }
           
-        case 'confirm':
-          if (item.id === 'confirm') {
+        case 'behaviors': {
+          // Toggle the selected behavior
+          if (cursorIndex === 0) {
+            setRefreshStale(!refreshStale);
+          } else if (cursorIndex === 1) {
+            setContextRestore(!contextRestore);
+          } else if (cursorIndex === 2) {
+            // Cycle through options
+            setTrackNew(trackNew === 'auto' ? 'ask' : trackNew === 'ask' ? 'manual' : 'auto');
+          }
+          break;
+        }
+          
+        case 'confirm': {
+          if (cursorIndex === 0) {
             handleComplete();
           } else {
             // Go back to previous tab
@@ -274,6 +267,7 @@ function GlobalWizard({ onComplete }: GlobalWizardProps) {
             setCursorIndex(0);
           }
           break;
+        }
       }
     }
   });
@@ -300,16 +294,130 @@ function GlobalWizard({ onComplete }: GlobalWizardProps) {
     }
   };
   
-  // Get footer hints
-  const getHints = () => {
-    if (isEditingCustom) {
-      return ['Type patterns', 'Enter: done', 'Esc: cancel'];
-    }
+  // Render experience items
+  const renderExperience = () => {
+    const items = [
+      { id: 'beginner', label: 'Beginner', desc: 'Auto-setup, minimal questions' },
+      { id: 'intermediate', label: 'Intermediate', desc: 'Smart defaults with confirmation' },
+      { id: 'expert', label: 'Expert', desc: 'Full control over all settings' },
+    ];
+    
+    return items.map((item, i) => (
+      <SelectItem
+        key={item.id}
+        label={item.label}
+        description={item.desc}
+        isCurrent={i === cursorIndex}
+        isSelected={item.id === experienceLevel}
+      />
+    ));
+  };
+  
+  // Render patterns items
+  const renderPatterns = () => {
+    const patternItems = COMMON_KEY_FILE_PATTERNS.map((p, i) => (
+      <SelectItem
+        key={p.pattern}
+        label={p.pattern}
+        description={p.description}
+        isCurrent={i === cursorIndex}
+        isSelected={selectedPatterns.has(p.pattern)}
+        isMulti
+      />
+    ));
+    
+    // Custom patterns item
+    const customIndex = COMMON_KEY_FILE_PATTERNS.length;
+    const customItem = isEditingCustom ? (
+      <Box key="_custom" flexDirection="column">
+        <Box>
+          <Text color="cyan">› </Text>
+          <Text color="gray">○ </Text>
+          <Text>Custom: </Text>
+          <Text color="cyan">{customPatterns}</Text>
+          <Text color="cyan" inverse> </Text>
+        </Box>
+        <Box marginLeft={4}>
+          <Text dimColor>Type comma-separated patterns, Enter when done</Text>
+        </Box>
+      </Box>
+    ) : (
+      <SelectItem
+        key="_custom"
+        label="Custom patterns..."
+        description={customPatterns || 'Add your own patterns'}
+        isCurrent={cursorIndex === customIndex}
+        isSelected={false}
+      />
+    );
+    
+    return [...patternItems, customItem];
+  };
+  
+  // Render behaviors items
+  const renderBehaviors = () => {
+    const items = [
+      { 
+        id: 'refresh', 
+        label: 'Auto-refresh snapshots:', 
+        value: refreshStale ? 'Yes' : 'No',
+        desc: 'Refresh when snapshots become stale' 
+      },
+      { 
+        id: 'context', 
+        label: 'Context restore:', 
+        value: contextRestore ? 'Yes' : 'No',
+        desc: 'Auto-restore after compaction' 
+      },
+      { 
+        id: 'track', 
+        label: 'New key files:', 
+        value: trackNew,
+        desc: 'When new potential key files detected (auto/ask/manual)' 
+      },
+    ];
+    
+    return items.map((item, i) => (
+      <SelectItem
+        key={item.id}
+        label={item.label}
+        value={item.value}
+        description={item.desc}
+        isCurrent={i === cursorIndex}
+        isSelected={i === cursorIndex}
+        isMulti
+      />
+    ));
+  };
+  
+  // Render confirm items
+  const renderConfirm = () => {
+    return (
+      <>
+        <SelectItem
+          label="Confirm and continue"
+          description="Save settings and install MCP server"
+          isCurrent={cursorIndex === 0}
+          isSelected={cursorIndex === 0}
+        />
+        <SelectItem
+          label="Go back"
+          description="Review settings"
+          isCurrent={cursorIndex === 1}
+          isSelected={false}
+        />
+      </>
+    );
+  };
+  
+  // Get content for current tab
+  const renderContent = () => {
     switch (activeTab) {
-      case 'patterns':
-        return ['↑↓: navigate', 'Space: (de)select', 'Tab: next section', 'Esc: cancel'];
-      default:
-        return ['↑↓: navigate', 'Enter: select', 'Tab: next section', 'Esc: cancel'];
+      case 'experience': return renderExperience();
+      case 'patterns': return renderPatterns();
+      case 'behaviors': return renderBehaviors();
+      case 'confirm': return renderConfirm();
+      default: return null;
     }
   };
   
@@ -328,42 +436,22 @@ function GlobalWizard({ onComplete }: GlobalWizardProps) {
         <Text bold>{getTitle()}</Text>
       </Box>
       
-      {/* Custom pattern input */}
-      {activeTab === 'patterns' && isEditingCustom && (
-        <Box marginBottom={1}>
-          <Text>○ </Text>
-          <Text dimColor>Custom: </Text>
-          <Text>{customPatterns}</Text>
-          <Text color="cyan">█</Text>
-        </Box>
-      )}
-      
-      {/* List items */}
-      {!isEditingCustom && items.map((item, i) => (
-        <SelectItem
-          key={item.id}
-          label={item.label}
-          description={item.desc}
-          isCurrent={i === cursorIndex}
-          isSelected={
-            activeTab === 'experience' ? item.id === experienceLevel :
-            activeTab === 'patterns' ? selectedPatterns.has(item.id) :
-            activeTab === 'confirm' ? item.id === 'confirm' :
-            false
-          }
-          isMulti={activeTab === 'patterns' && item.id !== '_custom'}
-        />
-      ))}
+      {/* Content */}
+      {renderContent()}
       
       {/* Scroll indicator */}
-      {items.length > 8 && cursorIndex < items.length - 1 && (
-        <Box marginLeft={2}>
+      {activeTab === 'patterns' && cursorIndex < COMMON_KEY_FILE_PATTERNS.length && (
+        <Box marginLeft={2} marginTop={1}>
           <Text dimColor>↓ more below</Text>
         </Box>
       )}
       
-      {/* Footer */}
-      <Footer hints={getHints()} />
+      {/* Footer - consistent hint for all tabs */}
+      <Footer hints={
+        isEditingCustom 
+          ? ['Type patterns', 'Enter: done', 'Esc: cancel']
+          : ['↑↓: navigate', 'Space/Enter: select', 'Tab: next section', 'Esc: cancel']
+      } />
     </Box>
   );
 }
@@ -439,6 +527,7 @@ function ProjectWizard({
       return;
     }
     
+    // Both Space and Enter work for consistency
     if (key.return || input === ' ') {
       if (tab === 'files') {
         const file = allFiles[cursorIndex];
@@ -540,8 +629,8 @@ function ProjectWizard({
         </>
       )}
       
-      {/* Footer */}
-      <Footer hints={['↑↓: navigate', 'Space: (de)select', 'Tab: next section', 'Esc: cancel']} />
+      {/* Footer - consistent hints */}
+      <Footer hints={['↑↓: navigate', 'Space/Enter: select', 'Tab: next section', 'Esc: cancel']} />
     </Box>
   );
 }
