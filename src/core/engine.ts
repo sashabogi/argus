@@ -11,6 +11,7 @@
 
 import { readFileSync } from 'fs';
 import { AIProvider, Message } from '../providers/types.js';
+import { buildSystemPrompt } from './prompts.js';
 
 export interface AnalysisOptions {
   maxTurns?: number;
@@ -340,16 +341,29 @@ export async function analyze(
   // Load document
   const content = readFileSync(documentPath, 'utf-8');
   
+  // Get document stats for context
+  const fileCount = (content.match(/^FILE:/gm) || []).length;
+  const lineCount = content.split('\n').length;
+  
   const bindings = new Map<string, unknown>();
   const commands: string[] = [];
   const messages: Message[] = [
     {
       role: 'system',
-      content: NUCLEUS_REFERENCE,
+      content: buildSystemPrompt(query),
     },
     {
       role: 'user',
-      content: `Document size: ${content.length} characters\n\nQuery: ${query}`,
+      content: `CODEBASE SNAPSHOT:
+- Total size: ${content.length.toLocaleString()} characters
+- Files: ${fileCount}
+- Lines: ${lineCount.toLocaleString()}
+
+Files are marked with "FILE: ./path/to/file" headers.
+
+QUERY: ${query}
+
+Begin analysis. Remember: provide a final answer within 10 turns.`,
     },
   ];
   

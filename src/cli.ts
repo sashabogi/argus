@@ -378,6 +378,235 @@ mcpCommand
   });
 
 // ============================================================================
+// argus context - Generate persistent codebase knowledge for CLAUDE.md
+// ============================================================================
+const contextCommand = program
+  .command('context')
+  .description('Generate architectural context for CLAUDE.md (survives compaction)');
+
+contextCommand
+  .command('generate <path>')
+  .description('Generate architecture summary for a project')
+  .option('-o, --output <file>', 'Output file (default: stdout)')
+  .option('-f, --format <format>', 'Output format: markdown, json', 'markdown')
+  .action(async (path: string, opts) => {
+    const config = loadConfig();
+    const errors = validateConfig(config);
+    
+    if (errors.length > 0) {
+      console.error('Configuration errors - run `argus init` first:');
+      errors.forEach(e => console.error(`  - ${e}`));
+      process.exit(1);
+    }
+    
+    const resolvedPath = resolve(path);
+    if (!existsSync(resolvedPath)) {
+      console.error(`Path not found: ${resolvedPath}`);
+      process.exit(1);
+    }
+    
+    console.error('📸 Creating snapshot...');
+    const snapshotPath = join(homedir(), '.argus', `context-${Date.now()}.txt`);
+    ensureConfigDir();
+    
+    const snapshotResult = createSnapshot(resolvedPath, snapshotPath, {
+      extensions: config.defaults.snapshotExtensions,
+      excludePatterns: config.defaults.excludePatterns,
+    });
+    
+    console.error(`   ${snapshotResult.fileCount} files, ${formatSize(snapshotResult.totalSize)}`);
+    console.error('🧠 Analyzing architecture...\n');
+    
+    try {
+      const provider = createProvider(config);
+      
+      // First, get the module structure
+      const moduleQuery = `List all the main directories/modules under src/ or the main source folder. 
+For each module, based on its file names and code, describe its purpose in ONE sentence.
+Format as a bullet list: - **module_name/** - description`;
+      
+      const moduleResult = await analyze(provider, snapshotPath, moduleQuery, {
+        maxTurns: 10,
+        onProgress: (turn) => {
+          process.stderr.write(`\r   Analyzing modules (turn ${turn})...`);
+        },
+      });
+      
+      console.error('\n');
+      
+      // Second, get the key patterns
+      const patternQuery = `What are the main coding patterns and conventions used? Look for:
+- Error handling approach
+- State management
+- API/data patterns
+- Testing patterns
+Keep it brief - one line per pattern.`;
+      
+      const patternResult = await analyze(provider, snapshotPath, patternQuery, {
+        maxTurns: 8,
+        onProgress: (turn) => {
+          process.stderr.write(`\r   Analyzing patterns (turn ${turn})...`);
+        },
+      });
+      
+      console.error('\n');
+      
+      // Third, get important files
+      const filesQuery = `What are the 5-10 most important files that a developer should understand first?
+List with file paths and one-line descriptions.`;
+      
+      const filesResult = await analyze(provider, snapshotPath, filesQuery, {
+        maxTurns: 8,
+        onProgress: (turn) => {
+          process.stderr.write(`\r   Finding key files (turn ${turn})...`);
+        },
+      });
+      
+      console.error('\n');
+      
+      // Generate the output
+      const projectName = basename(resolvedPath);
+      const output = generateContextMarkdown(projectName, {
+        modules: moduleResult.answer || 'Unable to analyze modules',
+        patterns: patternResult.answer || 'Unable to analyze patterns',
+        keyFiles: filesResult.answer || 'Unable to identify key files',
+        fileCount: snapshotResult.fileCount,
+        lineCount: snapshotResult.totalLines,
+      });
+      
+      if (opts.output) {
+        writeFileSync(opts.output, output);
+        console.error(`✅ Context saved to ${opts.output}`);
+      } else {
+        console.log(output);
+      }
+      
+    } finally {
+      // Cleanup
+      if (existsSync(snapshotPath)) {
+        unlinkSync(snapshotPath);
+      }
+    }
+  });
+
+contextCommand
+  .command('inject <path>')
+  .description('Add/update architecture section in CLAUDE.md')
+  .action(async (path: string) => {
+    const resolvedPath = resolve(path);
+    const claudeMdPath = join(resolvedPath, 'CLAUDE.md');
+    
+    // Generate context
+    console.error('Generating context...\n');
+    
+    // Create a child process to run generate and capture output
+    const { execSync } = await import('child_process');
+    
+    try {
+      const contextOutput = execSync(
+        `argus context generate "${resolvedPath}"`,
+        { encoding: 'utf-8', maxBuffer: 10 * 1024 * 1024 }
+      );
+      
+      const marker = '<!-- ARGUS:CONTEXT -->';
+      const endMarker = '<!-- /ARGUS:CONTEXT -->';
+      const wrappedContext = `${marker}\n${contextOutput}\n${endMarker}`;
+      
+      if (existsSync(claudeMdPath)) {
+        let existing = readFileSync(claudeMdPath, 'utf-8');
+        
+        // Check if markers exist
+        const markerRegex = new RegExp(`${marker}[\\s\\S]*?${endMarker}`, 'g');
+        
+        if (markerRegex.test(existing)) {
+          // Replace existing section
+          existing = existing.replace(markerRegex, wrappedContext);
+        } else {
+          // Append to end
+          existing = existing.trim() + '\n\n' + wrappedContext;
+        }
+        
+        writeFileSync(claudeMdPath, existing);
+        console.log(`✅ Updated ${claudeMdPath}`);
+      } else {
+        // Create new CLAUDE.md
+        writeFileSync(claudeMdPath, wrappedContext);
+        console.log(`✅ Created ${claudeMdPath}`);
+      }
+      
+      console.log('\nClaude Code will now have persistent architectural knowledge!');
+      console.log('This section survives compaction and restarts.');
+      
+    } catch (error) {
+      console.error('Failed to generate context:', error);
+      process.exit(1);
+    }
+  });
+
+contextCommand
+  .command('refresh <path>')
+  .description('Regenerate architecture context (run after major changes)')
+  .action(async (path: string) => {
+    // Just an alias for inject
+    const resolvedPath = resolve(path);
+    console.log('Refreshing codebase context...\n');
+    execSync(`argus context inject "${resolvedPath}"`, { stdio: 'inherit' });
+  });
+
+function generateContextMarkdown(projectName: string, data: {
+  modules: string;
+  patterns: string;
+  keyFiles: string;
+  fileCount: number;
+  lineCount: number;
+}): string {
+  return `## Codebase Intelligence (Auto-generated by Argus)
+
+> **This section provides architectural context that survives context compaction.**
+> Regenerate with: \`argus context refresh .\`
+
+### Project: ${projectName}
+- **Files:** ${data.fileCount}
+- **Lines:** ${data.lineCount.toLocaleString()}
+
+### Module Structure
+
+${data.modules}
+
+### Key Patterns & Conventions
+
+${data.patterns}
+
+### Important Files to Understand
+
+${data.keyFiles}
+
+### Using Argus for On-Demand Queries
+
+When you need more specific information about this codebase:
+
+\`\`\`bash
+# Find where something is implemented
+argus analyze . "Where is authentication handled?"
+
+# Understand a specific module
+argus analyze . "What does the cognition/ module do?"
+
+# Find code patterns
+argus search .argus/snapshot.txt "async fn.*Result"
+\`\`\`
+
+### After Compaction Checklist
+
+If your context was compacted or you're starting fresh:
+1. ✅ This architecture section is still available (you're reading it)
+2. Query @argus for specific questions about the codebase
+3. Don't re-scan the entire codebase - use targeted queries
+
+`;
+}
+
+// ============================================================================
 // argus config
 // ============================================================================
 program
