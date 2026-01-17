@@ -29,3 +29,6 @@ coverage/
 # Temp files
 *.tmp
 *.temp
+
+# Argus user config (contains API keys)
+.argus/
