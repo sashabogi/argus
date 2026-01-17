@@ -409,8 +409,9 @@ const mcpCommand = program
 
 mcpCommand
   .command('install')
-  .description('Install Argus as an MCP server for Claude Code')
-  .action(() => {
+  .description('Install Argus as an MCP server for Claude Code (global)')
+  .option('--no-claude-md', 'Skip global CLAUDE.md injection')
+  .action((opts) => {
     const config = loadConfig();
     const errors = validateConfig(config);
     
@@ -449,14 +450,40 @@ exec argus-mcp "$@"
       execSync(`claude mcp remove argus -s user 2>/dev/null || true`, { stdio: 'ignore' });
       execSync(`claude mcp add argus -s user -- "${wrapperPath}"`, { stdio: 'inherit' });
       console.log('\n✅ Argus MCP server installed for Claude Code!');
-      console.log('\nUsage in Claude Code:');
-      console.log('  @argus What are the main modules in this codebase?');
-      console.log('  @argus Find all error handling patterns');
     } catch {
       console.log('\n⚠️  Could not automatically add to Claude Code.');
       console.log('Add manually by running:');
       console.log(`  claude mcp add argus -s user -- "${wrapperPath}"`);
     }
+    
+    // Inject into global CLAUDE.md (applies to ALL projects, ALL agents)
+    if (opts.claudeMd !== false) {
+      const globalClaudeMdPath = join(homedir(), '.claude', 'CLAUDE.md');
+      
+      if (existsSync(globalClaudeMdPath)) {
+        let content = readFileSync(globalClaudeMdPath, 'utf-8');
+        
+        if (content.includes('## Codebase Intelligence (Argus)')) {
+          console.log('✓  Global CLAUDE.md already has Argus section');
+        } else {
+          // Append Argus section
+          content += GLOBAL_CLAUDE_MD_ARGUS_SECTION;
+          writeFileSync(globalClaudeMdPath, content);
+          console.log('✅ Added Argus section to global ~/.claude/CLAUDE.md');
+          console.log('   → This applies to ALL projects and ALL sub-agents');
+        }
+      } else {
+        // Create global CLAUDE.md directory if needed
+        const claudeDir = join(homedir(), '.claude');
+        if (!existsSync(claudeDir)) {
+          mkdirSync(claudeDir, { recursive: true });
+        }
+        writeFileSync(globalClaudeMdPath, GLOBAL_CLAUDE_MD_ARGUS_SECTION.trim());
+        console.log('✅ Created global ~/.claude/CLAUDE.md with Argus section');
+      }
+    }
+    
+    console.log('\n📋 Next: Run `argus setup .` in any project to create a snapshot');
   });
 
 mcpCommand
@@ -777,45 +804,114 @@ function getProviderDescription(provider: ProviderType): string {
   }
 }
 
-// CLAUDE.md template for project setup
+// ============================================================================
+// Global CLAUDE.md section - applies to ALL projects and ALL sub-agents
+// ============================================================================
+const GLOBAL_CLAUDE_MD_ARGUS_SECTION = `
+
+## Codebase Intelligence (Argus) — ALL AGENTS
+
+> **This applies to the main session AND all sub-agents/tasks regardless of type.**
+
+### The Rule: Argus Before Multi-File Exploration
+
+**Before reading more than 3 files to understand a codebase, use Argus MCP tools:**
+
+1. **Check for snapshot**: Look for \`.argus/snapshot.txt\` in the project
+2. **Search first** (FREE): \`search_codebase(".argus/snapshot.txt", "pattern")\`
+3. **Understand if needed** (~500 tokens): \`analyze_codebase(".argus/snapshot.txt", "How does X work?")\`
+4. **Then read specific files**: Only the files Argus identified as relevant
+
+### Why This Matters
+
+| Without Argus | With Argus |
+|---------------|------------|
+| Read 15+ files = 5,000-50,000 tokens | search → read 2 files = 100-500 tokens |
+| Slow, expensive, loses context | Fast, cheap, efficient |
+
+### For Sub-Agents
+
+If you are a sub-agent (coder, tester, reviewer, debugger, or ANY other type):
+1. Check if \`.argus/snapshot.txt\` exists in the project
+2. If exploring the codebase, use \`search_codebase\` first (it's free)
+3. This rule applies regardless of your specific role or instructions
+
+### Quick Reference
+
+| Tool | Cost | Use For |
+|------|------|---------|
+| \`search_codebase\` | FREE | Finding files, patterns, definitions |
+| \`analyze_codebase\` | ~500 tokens | Architecture questions, understanding flows |
+
+### No Snapshot?
+
+If \`.argus/snapshot.txt\` doesn't exist, proceed normally with native tools.
+The user can create one with: \`argus setup .\`
+`;
+
+// CLAUDE.md template for project setup - UNIVERSAL (works with any agent/skill setup)
 const CLAUDE_MD_ARGUS_SECTION = `
-## Codebase Intelligence (Argus)
+## Codebase Intelligence (Argus) — APPLIES TO ALL AGENTS
 
-**IMPORTANT: For architecture questions or exploring the codebase, use Argus MCP tools instead of scanning files manually.**
+> **This section applies to the main conversation AND all sub-agents/tasks.**
+> Any agent exploring the codebase should use Argus tools.
 
-Argus provides efficient codebase analysis that survives context compaction (~500 tokens vs 50,000+).
+### The Rule: Argus Before Multi-File Exploration
+
+**Before reading more than 3 files to understand the codebase, use Argus MCP tools:**
+
+\`\`\`
+# Step 1: Search (FREE, instant)
+search_codebase(".argus/snapshot.txt", "pattern-or-keyword")
+
+# Step 2: If needed, understand architecture (~500 tokens)  
+analyze_codebase(".argus/snapshot.txt", "How does X work?")
+
+# Step 3: Read only the specific files you need
+Read(the-file-you-found.ts)
+\`\`\`
+
+### Why This Matters
+
+| Approach | Tokens | Speed |
+|----------|--------|-------|
+| Read 15 files to find something | 5,000-50,000 | Slow |
+| search_codebase → Read 2 files | 100-500 | Fast |
 
 ### Available Tools
 
 | Tool | Use For | Cost |
 |------|---------|------|
-| \`search_codebase\` | Find files, patterns, definitions (use FIRST) | **FREE** |
-| \`analyze_codebase\` | Architecture questions, "how does X work" | ~500 tokens |
+| \`search_codebase\` | Find files, patterns, definitions | **FREE** |
+| \`analyze_codebase\` | Architecture, "how does X work" | ~500 tokens |
 | \`create_snapshot\` | Refresh after major changes | ~100 tokens |
 
-### Workflow
+### When to Use What
 
-1. **Finding things**: Use \`search_codebase\` with \`.argus/snapshot.txt\` - it's instant and free
-2. **Understanding**: Use \`analyze_codebase\` for architecture questions
-3. **After compaction**: Query Argus instead of re-scanning the codebase
+**Use Argus (\`.argus/snapshot.txt\`) for:**
+- Finding where something is defined or used
+- Understanding how modules connect
+- Debugging: "where is this function called?"
+- Architecture questions
+- After context compaction
 
-### When to Use Argus vs Native Tools
+**Use native Read/Search for:**
+- Single file you already know
+- Quick edits to known locations
+- Files you just created
 
-| Use Argus | Use Native Tools |
-|-----------|------------------|
-| Architecture questions | Quick single-file lookups |
-| "How does X work" | Recent changes in known files |
-| Finding patterns across files | Specific line edits |
-| After context compaction | Running tests/builds |
+### For Sub-Agents / Background Tasks
 
-### Keeping Snapshot Updated
+If you are a sub-agent or background task:
+1. Check if \`.argus/snapshot.txt\` exists
+2. Use \`search_codebase\` before reading multiple files
+3. This applies regardless of your specific role (coder, tester, reviewer, etc.)
+
+### Keeping Updated
 
 \`\`\`bash
-# Check if snapshot needs refresh
-argus status .
-
-# Refresh after major changes
-argus snapshot . -o .argus/snapshot.txt
+argus status .                              # Check if stale
+argus snapshot . -o .argus/snapshot.txt     # Refresh
 \`\`\`
 `;
 

@@ -45,24 +45,34 @@ npm install -g @hive-dev/argus
 # Interactive setup (configures API keys and preferences)
 argus init
 
-# Add to Claude Code
+# Add to Claude Code (installs MCP + global instructions)
 argus mcp install
+
+# Set up any project
+argus setup .
 ```
 
-### Project Setup (One Command)
+### How It Works
+
+The `argus mcp install` command does two things:
+
+1. **Installs the MCP server** - Makes Argus tools available in Claude Code
+2. **Injects global instructions** - Adds Argus awareness to `~/.claude/CLAUDE.md`
+
+The global instructions apply to **ALL projects** and **ALL sub-agents** (coders, testers, reviewers, debuggers, etc.) regardless of their specific configuration. This means:
+
+- You don't need to modify individual agent files
+- New agents you install automatically inherit Argus awareness
+- Works with any skill or agent ecosystem
+
+### Per-Project Setup
 
 ```bash
-# Set up Argus for any project - creates snapshot, updates CLAUDE.md, adds to .gitignore
+# In any project directory
 argus setup .
-
-# Or specify a path
-argus setup ~/projects/my-app
 ```
 
-This single command:
-1. Creates `.argus/snapshot.txt` with your codebase
-2. Injects instructions into `CLAUDE.md` so Claude Code automatically uses Argus
-3. Adds `.argus/` to `.gitignore`
+This creates `.argus/snapshot.txt` - a compressed representation of your codebase that Argus uses for efficient analysis.
 
 ### Basic Usage
 
