@@ -119,9 +119,18 @@ Compiles all source files into a single text file optimized for analysis.`,
   },
 ];
 
-// State
-let config = loadConfig();
-let provider = validateConfig(config).length === 0 ? createProvider(config) : null;
+// State - wrapped in try-catch to prevent any startup output
+let config: ReturnType<typeof loadConfig>;
+let provider: ReturnType<typeof createProvider> | null = null;
+
+try {
+  config = loadConfig();
+  provider = validateConfig(config).length === 0 ? createProvider(config) : null;
+} catch {
+  // Silently use defaults if config fails to load
+  config = loadConfig(); // Will return defaults
+  provider = null;
+}
 
 // Handle tool calls
 async function handleToolCall(name: string, args: Record<string, unknown>): Promise<unknown> {
@@ -330,18 +339,22 @@ rl.on('line', async (line) => {
     const request = JSON.parse(line) as MCPRequest;
     const response = await handleMessage(request);
     
-    // Only output if we have a response (notifications return null)
-    if (response !== null) {
+    // Only output if we have a response with a valid id
+    // (notifications return null, and requests without id are notifications)
+    if (response !== null && response.id !== undefined && response.id !== null) {
       console.log(JSON.stringify(response));
     }
   } catch (error) {
-    console.log(JSON.stringify({
+    // Only send parse errors if we can't parse at all
+    // Don't include null id - that would be invalid
+    const errorResponse = {
       jsonrpc: '2.0',
-      id: null,
+      id: 0, // Use 0 as fallback id for parse errors
       error: {
         code: -32700,
         message: 'Parse error',
       },
-    }));
+    };
+    console.log(JSON.stringify(errorResponse));
   }
 });

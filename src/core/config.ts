@@ -101,8 +101,8 @@ export function loadConfig(): ArgusConfig {
         ...loaded.defaults,
       },
     };
-  } catch (error) {
-    console.error('Warning: Failed to load config, using defaults:', error);
+  } catch {
+    // Silently return defaults - don't console.error as it can corrupt MCP JSON streams
     return DEFAULT_CONFIG;
   }
 }
