@@ -56,13 +56,19 @@ argus mcp install
 argus analyze ./my-project "What are the main architectural patterns?"
 
 # Create a snapshot for repeated analysis
-argus snapshot ./my-project -o ./project-snapshot.txt
+argus snapshot ./my-project -o .argus/snapshot.txt
 
-# Query an existing snapshot
-argus query ./project-snapshot.txt "Find all API endpoints"
+# Query an existing snapshot  
+argus query .argus/snapshot.txt "Find all API endpoints"
 
 # Fast grep search (no AI, instant results)
-argus search ./project-snapshot.txt "authentication"
+argus search .argus/snapshot.txt "authentication"
+
+# Check if snapshot needs refresh
+argus status .
+
+# Generate architecture summary for CLAUDE.md
+argus context generate . > ARCHITECTURE.md
 ```
 
 ### In Claude Code
@@ -204,7 +210,23 @@ Argus uses the [Nucleus DSL](https://github.com/michaelwhitford/nucleus) for doc
 
 - Node.js 18+
 - npm or pnpm
-- API key for your chosen provider (or Ollama for local)
+- API key for your chosen provider (or Ollama for free local usage)
+
+## FAQ & Documentation
+
+- **[FAQ](./docs/FAQ.md)** - Common questions about costs, workflow, and troubleshooting
+- **[CLAUDE.md Integration](./docs/CLAUDE_MD_INTEGRATION.md)** - How to add Argus to your project's CLAUDE.md
+
+### Quick Answers
+
+**"Do I need to pay for another API?"**  
+No! Use Ollama (free, local) or `argus search` (no AI at all).
+
+**"I'm starting a fresh project - how does Argus help?"**  
+Argus works from Day 0. Snapshot your PRD/TDD, then refresh as you build. See [FAQ](./docs/FAQ.md#im-starting-a-brand-new-project---theres-nothing-to-scan-yet).
+
+**"How do I keep the snapshot updated?"**  
+Run `argus status .` to check, then `argus snapshot .` to refresh. See [FAQ](./docs/FAQ.md#how-do-i-keep-the-snapshot-up-to-date).
 
 ## License
 

@@ -5,7 +5,7 @@
  */
 
 import { Command } from 'commander';
-import { existsSync, readFileSync, writeFileSync, statSync, unlinkSync } from 'fs';
+import { existsSync, readFileSync, writeFileSync, statSync, unlinkSync, readdirSync } from 'fs';
 import { homedir } from 'os';
 import { join, resolve, basename } from 'path';
 import { execSync } from 'child_process';
@@ -301,6 +301,102 @@ program
     
     for (const match of matches) {
       console.log(`${match.lineNum}: ${match.line.trim()}`);
+    }
+  });
+
+// ============================================================================
+// argus status - Check if snapshot is up to date
+// ============================================================================
+program
+  .command('status [path]')
+  .description('Check if snapshot is up to date')
+  .option('-s, --snapshot <file>', 'Snapshot file to check', '.argus/snapshot.txt')
+  .action((path: string | undefined, opts) => {
+    const projectPath = path ? resolve(path) : process.cwd();
+    const snapshotPath = resolve(projectPath, opts.snapshot);
+    
+    console.log('📊 Argus Status\n');
+    
+    // Check if snapshot exists
+    if (!existsSync(snapshotPath)) {
+      console.log('❌ No snapshot found at:', snapshotPath);
+      console.log('\nCreate one with:');
+      console.log(`   argus snapshot ${projectPath} -o ${snapshotPath}`);
+      return;
+    }
+    
+    // Get snapshot stats
+    const snapshotStats = statSync(snapshotPath);
+    const snapshotAge = Date.now() - snapshotStats.mtimeMs;
+    const ageHours = Math.floor(snapshotAge / (1000 * 60 * 60));
+    const ageDays = Math.floor(ageHours / 24);
+    
+    console.log('Snapshot:', snapshotPath);
+    console.log('Size:', formatSize(snapshotStats.size));
+    
+    if (ageDays > 0) {
+      console.log('Age:', `${ageDays} day${ageDays > 1 ? 's' : ''} ago`);
+    } else if (ageHours > 0) {
+      console.log('Age:', `${ageHours} hour${ageHours > 1 ? 's' : ''} ago`);
+    } else {
+      console.log('Age:', 'Less than an hour ago');
+    }
+    
+    // Count files modified since snapshot
+    const config = loadConfig();
+    let modifiedCount = 0;
+    let newCount = 0;
+    
+    function checkDir(dir: string) {
+      try {
+        const entries = readdirSync(dir, { withFileTypes: true });
+        for (const entry of entries) {
+          const fullPath = join(dir, entry.name);
+          
+          // Skip excluded patterns
+          if (config.defaults.excludePatterns.some(p => fullPath.includes(p))) {
+            continue;
+          }
+          
+          if (entry.isDirectory()) {
+            checkDir(fullPath);
+          } else if (entry.isFile()) {
+            const ext = entry.name.split('.').pop() || '';
+            if (config.defaults.snapshotExtensions.includes(ext)) {
+              const fileStats = statSync(fullPath);
+              if (fileStats.mtimeMs > snapshotStats.mtimeMs) {
+                modifiedCount++;
+              }
+              if (fileStats.birthtimeMs > snapshotStats.mtimeMs) {
+                newCount++;
+              }
+            }
+          }
+        }
+      } catch {
+        // Ignore permission errors
+      }
+    }
+    
+    checkDir(projectPath);
+    
+    console.log('\nChanges since snapshot:');
+    if (modifiedCount === 0 && newCount === 0) {
+      console.log('   ✅ No changes detected - snapshot is current');
+    } else {
+      if (newCount > 0) {
+        console.log(`   📄 ${newCount} new file${newCount > 1 ? 's' : ''}`);
+      }
+      if (modifiedCount > newCount) {
+        console.log(`   ✏️  ${modifiedCount - newCount} modified file${modifiedCount - newCount > 1 ? 's' : ''}`);
+      }
+      console.log('\n⚠️  Snapshot may be stale. Refresh with:');
+      console.log(`   argus snapshot ${projectPath} -o ${snapshotPath}`);
+    }
+    
+    // Recommendations based on age
+    if (ageDays >= 7) {
+      console.log('\n💡 Tip: Snapshot is over a week old. Consider refreshing.');
     }
   });
 
