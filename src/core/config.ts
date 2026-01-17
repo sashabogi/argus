@@ -8,8 +8,12 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
 import { homedir } from 'os';
 import { join } from 'path';
+import type { OnboardingConfig, ProjectOnboardingConfig } from './onboarding.js';
 
 export type ProviderType = 'zai' | 'anthropic' | 'openai' | 'deepseek' | 'ollama';
+
+// Re-export onboarding types
+export type { OnboardingConfig, ProjectOnboardingConfig } from './onboarding.js';
 
 export interface ProviderConfig {
   apiKey?: string;
@@ -33,6 +37,8 @@ export interface ArgusConfig {
     snapshotExtensions: string[];
     excludePatterns: string[];
   };
+  onboarding?: OnboardingConfig;
+  onboardingComplete?: boolean;
 }
 
 const DEFAULT_CONFIG: ArgusConfig = {

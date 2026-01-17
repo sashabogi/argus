@@ -8,3 +8,4 @@ export * from './config.js';
 export * from './snapshot.js';
 export * from './engine.js';
 export * from './prompts.js';
+export * from './onboarding.js';

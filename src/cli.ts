@@ -6,8 +6,10 @@
 
 import { Command } from 'commander';
 import { existsSync, readFileSync, writeFileSync, statSync, unlinkSync, readdirSync, mkdirSync } from 'fs';
+import * as fs from 'fs';
 import { homedir } from 'os';
 import { join, resolve, basename } from 'path';
+import * as path from 'path';
 import { execSync } from 'child_process';
 
 import {
@@ -23,6 +25,13 @@ import {
 import { createSnapshot, getSnapshotStats } from './core/snapshot.js';
 import { analyze, searchDocument } from './core/engine.js';
 import { createProvider, listProviderTypes, getProviderDisplayName } from './providers/index.js';
+import {
+  runGlobalOnboarding,
+  runProjectOnboarding,
+  detectPotentialKeyFiles,
+  formatDetectionSummary,
+  DEFAULT_ONBOARDING_CONFIG,
+} from './core/onboarding.js';
 
 const program = new Command();
 
@@ -411,8 +420,30 @@ mcpCommand
   .command('install')
   .description('Install Argus as an MCP server for Claude Code (global)')
   .option('--no-claude-md', 'Skip global CLAUDE.md injection')
-  .action((opts) => {
-    const config = loadConfig();
+  .option('--no-onboarding', 'Skip interactive onboarding')
+  .option('--reset-onboarding', 'Re-run onboarding even if already completed')
+  .action(async (opts) => {
+    let config = loadConfig();
+    
+    // Check if this is first install or user wants to reset onboarding
+    const shouldOnboard = opts.resetOnboarding || (!config.onboardingComplete && opts.onboarding !== false);
+    
+    if (shouldOnboard) {
+      try {
+        const onboardingConfig = await runGlobalOnboarding();
+        config.onboarding = onboardingConfig;
+        config.onboardingComplete = true;
+        saveConfig(config);
+      } catch (error) {
+        // If onboarding fails (e.g., non-interactive terminal), use defaults
+        console.log('\n⚠️  Interactive onboarding skipped (non-interactive terminal)');
+        console.log('   Using default settings. Run `argus mcp install --reset-onboarding` to configure later.\n');
+        config.onboarding = DEFAULT_ONBOARDING_CONFIG;
+        config.onboardingComplete = true;
+        saveConfig(config);
+      }
+    }
+    
     const errors = validateConfig(config);
     
     if (errors.length > 0) {
@@ -916,18 +947,23 @@ argus snapshot . -o .argus/snapshot.txt     # Refresh
 `;
 
 // ============================================================================
-// argus setup - One-command project setup
+// argus setup - One-command project setup with interactive onboarding
 // ============================================================================
 program
   .command('setup [path]')
-  .description('Set up Argus for a project (snapshot + CLAUDE.md + .gitignore)')
+  .description('Set up Argus for a project (snapshot + key files + CLAUDE.md + .gitignore)')
   .option('--no-claude-md', 'Skip CLAUDE.md injection')
   .option('--no-gitignore', 'Skip .gitignore update')
-  .action((path: string | undefined, opts) => {
-    const projectPath = path ? resolve(path) : process.cwd();
+  .option('--no-onboarding', 'Skip interactive key file selection')
+  .action(async (pathArg: string | undefined, opts) => {
+    const projectPath = pathArg ? resolve(pathArg) : process.cwd();
     
     console.log('🚀 Setting up Argus for project...\n');
     console.log(`   Project: ${projectPath}\n`);
+    
+    // Load config (includes onboarding settings)
+    const config = loadConfig();
+    const onboardingConfig = config.onboarding || DEFAULT_ONBOARDING_CONFIG;
     
     // 1. Create .argus directory
     const argusDir = join(projectPath, '.argus');
@@ -938,11 +974,39 @@ program
       console.log('✓  .argus/ directory exists');
     }
     
-    // 2. Create snapshot
+    // 2. Run project onboarding (key file detection/selection)
+    let projectConfig = onboardingConfig.projects[projectPath];
+    
+    if (!projectConfig && opts.onboarding !== false) {
+      try {
+        projectConfig = await runProjectOnboarding(projectPath, onboardingConfig, fs, path);
+        
+        // Save project config
+        config.onboarding = config.onboarding || DEFAULT_ONBOARDING_CONFIG;
+        config.onboarding.projects[projectPath] = projectConfig;
+        saveConfig(config);
+        
+        if (projectConfig.keyFiles.length > 0) {
+          console.log(`\n✅ Tracking ${projectConfig.keyFiles.length} key file(s) for this project`);
+        }
+      } catch {
+        // Non-interactive terminal, use auto-detection
+        console.log('\n⚠️  Interactive selection skipped (non-interactive terminal)');
+        const detected = detectPotentialKeyFiles(projectPath, onboardingConfig.globalKeyPatterns, fs, path);
+        projectConfig = {
+          keyFiles: detected.filter(d => d.matchedPattern).map(d => d.path),
+          customPatterns: [],
+          lastScanDate: new Date().toISOString(),
+        };
+      }
+    } else if (projectConfig) {
+      console.log(`✓  Using existing project configuration (${projectConfig.keyFiles.length} key files)`);
+    }
+    
+    // 3. Create snapshot
     const snapshotPath = join(argusDir, 'snapshot.txt');
     console.log('\n📸 Creating codebase snapshot...');
     
-    const config = loadConfig();
     const result = createSnapshot(projectPath, snapshotPath, {
       extensions: config.defaults.snapshotExtensions,
       excludePatterns: config.defaults.excludePatterns,
@@ -950,7 +1014,18 @@ program
     
     console.log(`✅ Snapshot created: ${result.fileCount} files, ${result.totalLines.toLocaleString()} lines`);
     
-    // 3. Update .gitignore
+    // 4. Save key files list to .argus/key-files.json for Claude to read
+    if (projectConfig && projectConfig.keyFiles.length > 0) {
+      const keyFilesPath = join(argusDir, 'key-files.json');
+      writeFileSync(keyFilesPath, JSON.stringify({
+        keyFiles: projectConfig.keyFiles,
+        customPatterns: projectConfig.customPatterns,
+        lastUpdated: new Date().toISOString(),
+      }, null, 2));
+      console.log('✅ Saved key files list to .argus/key-files.json');
+    }
+    
+    // 5. Update .gitignore
     if (opts.gitignore !== false) {
       const gitignorePath = join(projectPath, '.gitignore');
       let gitignoreContent = '';
@@ -968,7 +1043,7 @@ program
       }
     }
     
-    // 4. Inject CLAUDE.md instructions
+    // 6. Inject CLAUDE.md instructions
     if (opts.claudeMd !== false) {
       const claudeMdPath = join(projectPath, 'CLAUDE.md');
       
@@ -1018,6 +1093,14 @@ ${CLAUDE_MD_ARGUS_SECTION}`;
     console.log('  1. Restart Claude Code to pick up CLAUDE.md changes');
     console.log('  2. Ask Claude about your codebase architecture');
     console.log('  3. Run `argus status` periodically to check if snapshot needs refresh');
+    
+    if (projectConfig && projectConfig.keyFiles.length > 0) {
+      console.log(`\n💡 Key files tracked for context restoration:`);
+      projectConfig.keyFiles.slice(0, 5).forEach(f => console.log(`   • ${f}`));
+      if (projectConfig.keyFiles.length > 5) {
+        console.log(`   ... and ${projectConfig.keyFiles.length - 5} more`);
+      }
+    }
   });
 
 // Run
