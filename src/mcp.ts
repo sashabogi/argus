@@ -266,7 +266,7 @@ async function handleToolsCall(params: { name: string; arguments: Record<string,
 }
 
 // Main message handler
-async function handleMessage(request: MCPRequest): Promise<MCPResponse> {
+async function handleMessage(request: MCPRequest): Promise<MCPResponse | null> {
   try {
     let result: unknown;
     
@@ -281,9 +281,14 @@ async function handleMessage(request: MCPRequest): Promise<MCPResponse> {
         result = await handleToolsCall(request.params as { name: string; arguments: Record<string, unknown> });
         break;
       case 'notifications/initialized':
-        // No response needed for notifications
-        return { jsonrpc: '2.0', id: request.id, result: {} };
+      case 'notifications/cancelled':
+        // Notifications don't get responses
+        return null;
       default:
+        // Check if it's a notification (no id = notification)
+        if (request.id === undefined || request.id === null) {
+          return null; // Don't respond to unknown notifications
+        }
         return {
           jsonrpc: '2.0',
           id: request.id,
@@ -324,7 +329,11 @@ rl.on('line', async (line) => {
   try {
     const request = JSON.parse(line) as MCPRequest;
     const response = await handleMessage(request);
-    console.log(JSON.stringify(response));
+    
+    // Only output if we have a response (notifications return null)
+    if (response !== null) {
+      console.log(JSON.stringify(response));
+    }
   } catch (error) {
     console.log(JSON.stringify({
       jsonrpc: '2.0',
