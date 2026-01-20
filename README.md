@@ -161,12 +161,50 @@ Options:
 - `--extensions, -e` - File extensions to include (comma-separated)
 - `--exclude` - Patterns to exclude
 - `--output, -o` - Output file path
+- `--enhanced` - Include structural metadata (import graph, exports index)
+
+**Enhanced Snapshots** (recommended):
+```bash
+argus snapshot . -o .argus/snapshot.txt --enhanced
+```
+
+Enhanced snapshots include structural metadata that enables zero-cost queries:
+- **Import Graph** - Which files import which other files
+- **Export Index** - Symbol → files that export it
+- **Who Imports Whom** - Reverse dependency graph
+- **Function Signatures** - With line numbers
 
 ### `argus query <snapshot> <query>`
 Query an existing snapshot file.
 
 ### `argus search <snapshot> <pattern>`
 Fast grep search without AI (instant results).
+
+## MCP Tools (for Claude Code)
+
+When installed via `argus mcp install`, Claude Code gets access to these tools:
+
+| Tool | Cost | Description |
+|------|------|-------------|
+| `search_codebase` | **FREE** | Fast regex search across snapshot |
+| `analyze_codebase` | ~500 tokens | AI-powered architecture analysis |
+| `find_importers` | **FREE** | Find all files that import a given file |
+| `find_symbol` | **FREE** | Find where a symbol is exported from |
+| `get_file_deps` | **FREE** | Get all imports of a specific file |
+| `create_snapshot` | ~100 tokens | Create/refresh a snapshot |
+
+### Zero-Cost Tools (Enhanced Snapshots)
+
+With enhanced snapshots, Claude Code can answer dependency questions instantly:
+
+```
+# Instead of reading 15 files to understand a flow:
+find_symbol("useAuth")           → "contexts/auth-context.tsx:42"
+find_importers("auth-context")   → ["app.tsx", "dashboard.tsx", ...]
+get_file_deps("app.tsx")         → ["./auth", "./theme", "@/components/ui"]
+```
+
+These tools require an enhanced snapshot (created with `--enhanced` flag).
 
 ### `argus setup [path]`
 One-command project setup. Creates snapshot, updates .gitignore, optionally injects into project CLAUDE.md.
