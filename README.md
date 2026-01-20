@@ -1,5 +1,7 @@
 # Argus
 
+![Argus Banner](assets/argus-banner.jpg)
+
 **Codebase Intelligence Beyond Context Limits**
 
 Argus is an AI-powered codebase analysis tool that understands your entire project, regardless of size. It provides intelligent answers about code architecture, patterns, and relationships that would be impossible with traditional context-limited approaches.
