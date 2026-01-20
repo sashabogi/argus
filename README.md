@@ -168,14 +168,14 @@ Options:
 - `--extensions, -e` - File extensions to include (comma-separated)
 - `--exclude` - Patterns to exclude
 - `--output, -o` - Output file path
-- `--enhanced` - Include structural metadata (import graph, exports index)
+- `--basic` - Skip structural metadata (faster, smaller snapshot)
 
-**Enhanced Snapshots** (recommended):
+**Snapshots are enhanced by default**, including structural metadata that enables zero-cost queries:
 ```bash
-argus snapshot . -o .argus/snapshot.txt --enhanced
+argus snapshot . -o .argus/snapshot.txt
 ```
 
-Enhanced snapshots include structural metadata that enables zero-cost queries:
+Enhanced snapshots include:
 - **Import Graph** - Which files import which other files
 - **Export Index** - Symbol → files that export it
 - **Who Imports Whom** - Reverse dependency graph
@@ -200,9 +200,9 @@ When installed via `argus mcp install`, Claude Code gets access to these tools:
 | `get_file_deps` | **FREE** | Get all imports of a specific file |
 | `create_snapshot` | ~100 tokens | Create/refresh a snapshot |
 
-### Zero-Cost Tools (Enhanced Snapshots)
+### Zero-Cost Tools
 
-With enhanced snapshots, Claude Code can answer dependency questions instantly:
+Since snapshots are enhanced by default, Claude Code can answer dependency questions instantly:
 
 ```
 # Instead of reading 15 files to understand a flow:
@@ -211,7 +211,7 @@ find_importers("auth-context")   → ["app.tsx", "dashboard.tsx", ...]
 get_file_deps("app.tsx")         → ["./auth", "./theme", "@/components/ui"]
 ```
 
-These tools require an enhanced snapshot (created with `--enhanced` flag).
+These tools use the structural metadata included in all snapshots by default.
 
 ### `argus setup [path]`
 One-command project setup. Creates snapshot, updates .gitignore, optionally injects into project CLAUDE.md.

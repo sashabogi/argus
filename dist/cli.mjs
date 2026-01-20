@@ -2088,11 +2088,11 @@ program.command("analyze <path> <query>").description("Analyze a codebase or sna
     console.log("\u{1F4F8} Creating snapshot of codebase...");
     snapshotPath = join4(homedir2(), ".argus", `temp-${Date.now()}.txt`);
     ensureConfigDir();
-    const result = createSnapshot(resolvedPath, snapshotPath, {
+    const result = createEnhancedSnapshot(resolvedPath, snapshotPath, {
       extensions: config.defaults.snapshotExtensions,
       excludePatterns: config.defaults.excludePatterns
     });
-    console.log(`   ${result.fileCount} files, ${formatSize(result.totalSize)}`);
+    console.log(`   ${result.fileCount} files, ${formatSize(result.totalSize)} (enhanced)`);
     tempSnapshot = true;
   }
   console.log(`
@@ -2131,7 +2131,7 @@ program.command("analyze <path> <query>").description("Analyze a codebase or sna
     }
   }
 });
-program.command("snapshot <path>").description("Create a codebase snapshot for analysis").option("-o, --output <file>", "Output file path").option("-e, --extensions <exts>", "File extensions to include (comma-separated)").option("--exclude <patterns>", "Patterns to exclude (comma-separated)").option("--enhanced", "Include structural metadata (import graph, exports index)").action((path2, opts) => {
+program.command("snapshot <path>").description("Create a codebase snapshot for analysis").option("-o, --output <file>", "Output file path").option("-e, --extensions <exts>", "File extensions to include (comma-separated)").option("--exclude <patterns>", "Patterns to exclude (comma-separated)").option("--basic", "Skip structural metadata (faster, smaller snapshot)").action((path2, opts) => {
   const config = loadConfig();
   const resolvedPath = resolve(path2);
   if (!existsSync4(resolvedPath)) {
@@ -2144,16 +2144,18 @@ program.command("snapshot <path>").description("Create a codebase snapshot for a
   console.log(`   Output: ${outputPath}`);
   const extensions = opts.extensions ? opts.extensions.split(",").map((e) => e.trim()) : config.defaults.snapshotExtensions;
   const excludePatterns = opts.exclude ? opts.exclude.split(",").map((p) => p.trim()) : config.defaults.excludePatterns;
-  if (opts.enhanced) {
+  if (opts.basic) {
+    console.log("   Mode: Basic (no structural metadata)");
+  } else {
     console.log("   Mode: Enhanced (with import graph & exports index)");
   }
-  const result = opts.enhanced ? createEnhancedSnapshot(resolvedPath, outputPath, { extensions, excludePatterns }) : createSnapshot(resolvedPath, outputPath, { extensions, excludePatterns });
+  const result = opts.basic ? createSnapshot(resolvedPath, outputPath, { extensions, excludePatterns }) : createEnhancedSnapshot(resolvedPath, outputPath, { extensions, excludePatterns });
   console.log(`
 \u2705 Snapshot created!`);
   console.log(`   Files: ${result.fileCount}`);
   console.log(`   Lines: ${result.totalLines.toLocaleString()}`);
   console.log(`   Size: ${formatSize(result.totalSize)}`);
-  if (opts.enhanced && "metadata" in result) {
+  if (!opts.basic && "metadata" in result) {
     const meta = result.metadata;
     console.log(`
 \u{1F4CA} Structural Metadata:`);
@@ -2368,11 +2370,11 @@ contextCommand.command("generate <path>").description("Generate architecture sum
   console.error("\u{1F4F8} Creating snapshot...");
   const snapshotPath = join4(homedir2(), ".argus", `context-${Date.now()}.txt`);
   ensureConfigDir();
-  const snapshotResult = createSnapshot(resolvedPath, snapshotPath, {
+  const snapshotResult = createEnhancedSnapshot(resolvedPath, snapshotPath, {
     extensions: config.defaults.snapshotExtensions,
     excludePatterns: config.defaults.excludePatterns
   });
-  console.error(`   ${snapshotResult.fileCount} files, ${formatSize(snapshotResult.totalSize)}`);
+  console.error(`   ${snapshotResult.fileCount} files, ${formatSize(snapshotResult.totalSize)} (enhanced)`);
   console.error("\u{1F9E0} Analyzing architecture...\n");
   try {
     const provider = createProvider(config);
@@ -2719,12 +2721,15 @@ program.command("setup [path]").description("Set up Argus for a project (snapsho
     console.log(`\u2713  Using existing project configuration (${projectConfig.keyFiles.length} key files)`);
   }
   const snapshotPath = join4(argusDir, "snapshot.txt");
-  console.log("\n\u{1F4F8} Creating codebase snapshot...");
-  const result = createSnapshot(projectPath, snapshotPath, {
+  console.log("\n\u{1F4F8} Creating codebase snapshot (enhanced)...");
+  const result = createEnhancedSnapshot(projectPath, snapshotPath, {
     extensions: config.defaults.snapshotExtensions,
     excludePatterns: config.defaults.excludePatterns
   });
   console.log(`\u2705 Snapshot created: ${result.fileCount} files, ${result.totalLines.toLocaleString()} lines`);
+  if ("metadata" in result) {
+    console.log(`   Imports: ${result.metadata.imports.length} | Exports: ${result.metadata.exports.length} | Symbols: ${Object.keys(result.metadata.symbolIndex).length}`);
+  }
   if (projectConfig && projectConfig.keyFiles.length > 0) {
     const keyFilesPath = join4(argusDir, "key-files.json");
     writeFileSync4(keyFilesPath, JSON.stringify({

@@ -8,6 +8,7 @@
 import { createInterface } from 'readline';
 import { loadConfig, validateConfig } from './core/config.js';
 import { createSnapshot } from './core/snapshot.js';
+import { createEnhancedSnapshot } from './core/enhanced-snapshot.js';
 import { analyze, searchDocument } from './core/engine.js';
 import { createProvider } from './providers/index.js';
 import { existsSync, statSync, mkdtempSync, writeFileSync, unlinkSync, readFileSync } from 'fs';
@@ -44,7 +45,7 @@ Use when you need to know:
 - Who uses this function/component?
 - Impact analysis before refactoring
 
-Requires an enhanced snapshot with metadata (created with --enhanced flag).`,
+Snapshots are enhanced by default and include this metadata.`,
     inputSchema: {
       type: 'object',
       properties: {
@@ -69,7 +70,7 @@ Use when you need to know:
 - Which file exports this component?
 - Find the source of a type
 
-Requires an enhanced snapshot with metadata (created with --enhanced flag).`,
+Snapshots are enhanced by default and include this metadata.`,
     inputSchema: {
       type: 'object',
       properties: {
@@ -94,7 +95,7 @@ Use when you need to understand:
 - What modules need to be loaded?
 - Trace the dependency chain
 
-Requires an enhanced snapshot with metadata (created with --enhanced flag).`,
+Snapshots are enhanced by default and include this metadata.`,
     inputSchema: {
       type: 'object',
       properties: {
@@ -183,9 +184,10 @@ Returns matching lines with line numbers - much faster than grep across many fil
   },
   {
     name: 'create_snapshot',
-    description: `Create a codebase snapshot for analysis. Run this ONCE per project, then use the snapshot for all queries.
+    description: `Create an enhanced codebase snapshot for analysis. Run this ONCE per project, then use the snapshot for all queries.
 
 The snapshot compiles all source files into a single optimized file that survives context compaction.
+Includes structural metadata (import graph, exports index) for zero-cost dependency queries.
 Store at .argus/snapshot.txt so other tools can find it.
 
 Run this when:
@@ -420,13 +422,13 @@ async function handleToolCall(name: string, args: Record<string, unknown>): Prom
       let snapshotPath = path;
       let tempSnapshot = false;
       
-      // If it's a directory, create a temporary snapshot
+      // If it's a directory, create a temporary enhanced snapshot
       const stats = statSync(path);
       if (stats.isDirectory()) {
         const tempDir = mkdtempSync(join(tmpdir(), 'argus-'));
         snapshotPath = join(tempDir, 'snapshot.txt');
         
-        const result = createSnapshot(path, snapshotPath, {
+        createEnhancedSnapshot(path, snapshotPath, {
           extensions: config.defaults.snapshotExtensions,
           excludePatterns: config.defaults.excludePatterns,
         });
@@ -483,7 +485,8 @@ async function handleToolCall(name: string, args: Record<string, unknown>): Prom
         throw new Error(`Path not found: ${path}`);
       }
       
-      const result = createSnapshot(path, outputPath, {
+      // Always create enhanced snapshot by default
+      const result = createEnhancedSnapshot(path, outputPath, {
         extensions,
         excludePatterns: config.defaults.excludePatterns,
       });
@@ -493,6 +496,12 @@ async function handleToolCall(name: string, args: Record<string, unknown>): Prom
         fileCount: result.fileCount,
         totalLines: result.totalLines,
         totalSize: result.totalSize,
+        enhanced: true,
+        metadata: 'metadata' in result ? {
+          imports: result.metadata.imports.length,
+          exports: result.metadata.exports.length,
+          symbols: Object.keys(result.metadata.symbolIndex).length,
+        } : undefined,
       };
     }
     

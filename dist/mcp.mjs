@@ -79,6 +79,10 @@ function validateConfig(config2) {
   return errors;
 }
 
+// src/core/enhanced-snapshot.ts
+import { readFileSync as readFileSync3, writeFileSync as writeFileSync3 } from "fs";
+import { join as join3, dirname, extname as extname2 } from "path";
+
 // src/core/snapshot.ts
 import { existsSync as existsSync2, readFileSync as readFileSync2, readdirSync, statSync, writeFileSync as writeFileSync2 } from "fs";
 import { join as join2, relative, extname } from "path";
@@ -203,8 +207,253 @@ function createSnapshot(projectPath, outputPath, options = {}) {
   };
 }
 
+// src/core/enhanced-snapshot.ts
+function parseImports(content, filePath) {
+  const imports = [];
+  const lines = content.split("\n");
+  const patterns = [
+    // import { a, b } from 'module'
+    /import\s+(?:type\s+)?{([^}]+)}\s+from\s+['"]([^'"]+)['"]/g,
+    // import * as name from 'module'
+    /import\s+\*\s+as\s+(\w+)\s+from\s+['"]([^'"]+)['"]/g,
+    // import defaultExport from 'module'
+    /import\s+(?:type\s+)?(\w+)\s+from\s+['"]([^'"]+)['"]/g,
+    // import 'module' (side-effect)
+    /import\s+['"]([^'"]+)['"]/g,
+    // require('module')
+    /(?:const|let|var)\s+(?:{([^}]+)}|(\w+))\s*=\s*require\s*\(\s*['"]([^'"]+)['"]\s*\)/g
+  ];
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed.startsWith("import") && !trimmed.includes("require(")) continue;
+    let match = /import\s+(type\s+)?{([^}]+)}\s+from\s+['"]([^'"]+)['"]/.exec(trimmed);
+    if (match) {
+      const isType = !!match[1];
+      const symbols = match[2].split(",").map((s) => s.trim().split(/\s+as\s+/)[0].trim()).filter(Boolean);
+      const target = match[3];
+      imports.push({
+        source: filePath,
+        target,
+        symbols,
+        isDefault: false,
+        isType
+      });
+      continue;
+    }
+    match = /import\s+\*\s+as\s+(\w+)\s+from\s+['"]([^'"]+)['"]/.exec(trimmed);
+    if (match) {
+      imports.push({
+        source: filePath,
+        target: match[2],
+        symbols: ["*"],
+        isDefault: false,
+        isType: false
+      });
+      continue;
+    }
+    match = /import\s+(type\s+)?(\w+)\s+from\s+['"]([^'"]+)['"]/.exec(trimmed);
+    if (match && !trimmed.includes("{")) {
+      imports.push({
+        source: filePath,
+        target: match[3],
+        symbols: [match[2]],
+        isDefault: true,
+        isType: !!match[1]
+      });
+      continue;
+    }
+    match = /^import\s+['"]([^'"]+)['"]/.exec(trimmed);
+    if (match) {
+      imports.push({
+        source: filePath,
+        target: match[1],
+        symbols: [],
+        isDefault: false,
+        isType: false
+      });
+    }
+  }
+  return imports;
+}
+function parseExports(content, filePath) {
+  const exports = [];
+  const lines = content.split("\n");
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const trimmed = line.trim();
+    let match = /export\s+(?:async\s+)?function\s+(\w+)\s*(\([^)]*\))/.exec(trimmed);
+    if (match) {
+      exports.push({
+        file: filePath,
+        symbol: match[1],
+        type: "function",
+        signature: `function ${match[1]}${match[2]}`,
+        line: i + 1
+      });
+      continue;
+    }
+    match = /export\s+class\s+(\w+)/.exec(trimmed);
+    if (match) {
+      exports.push({
+        file: filePath,
+        symbol: match[1],
+        type: "class",
+        line: i + 1
+      });
+      continue;
+    }
+    match = /export\s+(const|let|var)\s+(\w+)/.exec(trimmed);
+    if (match) {
+      exports.push({
+        file: filePath,
+        symbol: match[2],
+        type: match[1],
+        line: i + 1
+      });
+      continue;
+    }
+    match = /export\s+(type|interface)\s+(\w+)/.exec(trimmed);
+    if (match) {
+      exports.push({
+        file: filePath,
+        symbol: match[2],
+        type: match[1],
+        line: i + 1
+      });
+      continue;
+    }
+    match = /export\s+enum\s+(\w+)/.exec(trimmed);
+    if (match) {
+      exports.push({
+        file: filePath,
+        symbol: match[1],
+        type: "enum",
+        line: i + 1
+      });
+      continue;
+    }
+    if (/export\s+default/.test(trimmed)) {
+      match = /export\s+default\s+(?:function\s+)?(\w+)?/.exec(trimmed);
+      exports.push({
+        file: filePath,
+        symbol: match?.[1] || "default",
+        type: "default",
+        line: i + 1
+      });
+    }
+  }
+  return exports;
+}
+function resolveImportPath(importPath, fromFile, projectFiles) {
+  if (!importPath.startsWith(".")) return void 0;
+  const fromDir = dirname(fromFile);
+  let resolved = join3(fromDir, importPath);
+  const extensions = [".ts", ".tsx", ".js", ".jsx", "", "/index.ts", "/index.tsx", "/index.js", "/index.jsx"];
+  for (const ext of extensions) {
+    const candidate = resolved + ext;
+    if (projectFiles.includes(candidate) || projectFiles.includes("./" + candidate)) {
+      return candidate;
+    }
+  }
+  return void 0;
+}
+function createEnhancedSnapshot(projectPath, outputPath, options = {}) {
+  const baseResult = createSnapshot(projectPath, outputPath, options);
+  const allImports = [];
+  const allExports = [];
+  const fileIndex = {};
+  const projectFiles = baseResult.files.map((f) => "./" + f);
+  for (const relPath of baseResult.files) {
+    const fullPath = join3(projectPath, relPath);
+    const ext = extname2(relPath).toLowerCase();
+    if (![".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"].includes(ext)) {
+      continue;
+    }
+    try {
+      const content = readFileSync3(fullPath, "utf-8");
+      const imports = parseImports(content, relPath);
+      const exports = parseExports(content, relPath);
+      for (const imp of imports) {
+        imp.resolved = resolveImportPath(imp.target, relPath, projectFiles);
+      }
+      allImports.push(...imports);
+      allExports.push(...exports);
+      fileIndex[relPath] = {
+        path: relPath,
+        imports,
+        exports,
+        size: content.length,
+        lines: content.split("\n").length
+      };
+    } catch {
+    }
+  }
+  const importGraph = {};
+  for (const imp of allImports) {
+    if (imp.resolved) {
+      if (!importGraph[imp.source]) importGraph[imp.source] = [];
+      if (!importGraph[imp.source].includes(imp.resolved)) {
+        importGraph[imp.source].push(imp.resolved);
+      }
+    }
+  }
+  const exportGraph = {};
+  for (const imp of allImports) {
+    if (imp.resolved) {
+      if (!exportGraph[imp.resolved]) exportGraph[imp.resolved] = [];
+      if (!exportGraph[imp.resolved].includes(imp.source)) {
+        exportGraph[imp.resolved].push(imp.source);
+      }
+    }
+  }
+  const symbolIndex = {};
+  for (const exp of allExports) {
+    if (!symbolIndex[exp.symbol]) symbolIndex[exp.symbol] = [];
+    if (!symbolIndex[exp.symbol].includes(exp.file)) {
+      symbolIndex[exp.symbol].push(exp.file);
+    }
+  }
+  const metadataSection = `
+
+================================================================================
+METADATA: IMPORT GRAPH
+================================================================================
+${Object.entries(importGraph).map(([file, imports]) => `${file}:
+${imports.map((i) => `  \u2192 ${i}`).join("\n")}`).join("\n\n")}
+
+================================================================================
+METADATA: EXPORT INDEX
+================================================================================
+${Object.entries(symbolIndex).map(([symbol, files]) => `${symbol}: ${files.join(", ")}`).join("\n")}
+
+================================================================================
+METADATA: FILE EXPORTS
+================================================================================
+${allExports.map((e) => `${e.file}:${e.line} - ${e.type} ${e.symbol}${e.signature ? ` ${e.signature}` : ""}`).join("\n")}
+
+================================================================================
+METADATA: WHO IMPORTS WHOM
+================================================================================
+${Object.entries(exportGraph).map(([file, importers]) => `${file} is imported by:
+${importers.map((i) => `  \u2190 ${i}`).join("\n")}`).join("\n\n")}
+`;
+  const existingContent = readFileSync3(outputPath, "utf-8");
+  writeFileSync3(outputPath, existingContent + metadataSection);
+  return {
+    ...baseResult,
+    metadata: {
+      imports: allImports,
+      exports: allExports,
+      fileIndex,
+      importGraph,
+      exportGraph,
+      symbolIndex
+    }
+  };
+}
+
 // src/core/engine.ts
-import { readFileSync as readFileSync3 } from "fs";
+import { readFileSync as readFileSync4 } from "fs";
 
 // src/core/prompts.ts
 var NUCLEUS_COMMANDS = `
@@ -562,7 +811,7 @@ async function analyze(provider2, documentPath, query, options = {}) {
     onProgress
   } = options;
   const dynamicLimit = Math.min(getTurnLimit(query), maxTurns);
-  const content = readFileSync3(documentPath, "utf-8");
+  const content = readFileSync4(documentPath, "utf-8");
   const fileCount = (content.match(/^FILE:/gm) || []).length;
   const lineCount = content.split("\n").length;
   const bindings = /* @__PURE__ */ new Map();
@@ -676,7 +925,7 @@ ${truncatedResult}`;
   };
 }
 function searchDocument(documentPath, pattern, options = {}) {
-  const content = readFileSync3(documentPath, "utf-8");
+  const content = readFileSync4(documentPath, "utf-8");
   const flags = options.caseInsensitive ? "gi" : "g";
   const regex = new RegExp(pattern, flags);
   const lines = content.split("\n");
@@ -960,9 +1209,9 @@ function createProviderByType(type, config2) {
 }
 
 // src/mcp.ts
-import { existsSync as existsSync3, statSync as statSync2, mkdtempSync, unlinkSync, readFileSync as readFileSync4 } from "fs";
+import { existsSync as existsSync4, statSync as statSync2, mkdtempSync, unlinkSync, readFileSync as readFileSync5 } from "fs";
 import { tmpdir } from "os";
-import { join as join3, resolve } from "path";
+import { join as join4, resolve } from "path";
 var TOOLS = [
   {
     name: "find_importers",
@@ -973,7 +1222,7 @@ Use when you need to know:
 - Who uses this function/component?
 - Impact analysis before refactoring
 
-Requires an enhanced snapshot with metadata (created with --enhanced flag).`,
+Snapshots are enhanced by default and include this metadata.`,
     inputSchema: {
       type: "object",
       properties: {
@@ -998,7 +1247,7 @@ Use when you need to know:
 - Which file exports this component?
 - Find the source of a type
 
-Requires an enhanced snapshot with metadata (created with --enhanced flag).`,
+Snapshots are enhanced by default and include this metadata.`,
     inputSchema: {
       type: "object",
       properties: {
@@ -1023,7 +1272,7 @@ Use when you need to understand:
 - What modules need to be loaded?
 - Trace the dependency chain
 
-Requires an enhanced snapshot with metadata (created with --enhanced flag).`,
+Snapshots are enhanced by default and include this metadata.`,
     inputSchema: {
       type: "object",
       properties: {
@@ -1112,9 +1361,10 @@ Returns matching lines with line numbers - much faster than grep across many fil
   },
   {
     name: "create_snapshot",
-    description: `Create a codebase snapshot for analysis. Run this ONCE per project, then use the snapshot for all queries.
+    description: `Create an enhanced codebase snapshot for analysis. Run this ONCE per project, then use the snapshot for all queries.
 
 The snapshot compiles all source files into a single optimized file that survives context compaction.
+Includes structural metadata (import graph, exports index) for zero-cost dependency queries.
 Store at .argus/snapshot.txt so other tools can find it.
 
 Run this when:
@@ -1202,10 +1452,10 @@ async function handleToolCall(name, args) {
     case "find_importers": {
       const path = resolve(args.path);
       const target = args.target;
-      if (!existsSync3(path)) {
+      if (!existsSync4(path)) {
         throw new Error(`File not found: ${path}`);
       }
-      const content = readFileSync4(path, "utf-8");
+      const content = readFileSync5(path, "utf-8");
       const metadata = parseSnapshotMetadata(content);
       if (!metadata) {
         throw new Error("This snapshot does not have metadata. Create with: argus snapshot --enhanced");
@@ -1236,10 +1486,10 @@ async function handleToolCall(name, args) {
     case "find_symbol": {
       const path = resolve(args.path);
       const symbol = args.symbol;
-      if (!existsSync3(path)) {
+      if (!existsSync4(path)) {
         throw new Error(`File not found: ${path}`);
       }
-      const content = readFileSync4(path, "utf-8");
+      const content = readFileSync5(path, "utf-8");
       const metadata = parseSnapshotMetadata(content);
       if (!metadata) {
         throw new Error("This snapshot does not have metadata. Create with: argus snapshot --enhanced");
@@ -1256,10 +1506,10 @@ async function handleToolCall(name, args) {
     case "get_file_deps": {
       const path = resolve(args.path);
       const file = args.file;
-      if (!existsSync3(path)) {
+      if (!existsSync4(path)) {
         throw new Error(`File not found: ${path}`);
       }
-      const content = readFileSync4(path, "utf-8");
+      const content = readFileSync5(path, "utf-8");
       const metadata = parseSnapshotMetadata(content);
       if (!metadata) {
         throw new Error("This snapshot does not have metadata. Create with: argus snapshot --enhanced");
@@ -1286,16 +1536,16 @@ async function handleToolCall(name, args) {
       const path = resolve(args.path);
       const query = args.query;
       const maxTurns = args.maxTurns || 15;
-      if (!existsSync3(path)) {
+      if (!existsSync4(path)) {
         throw new Error(`Path not found: ${path}`);
       }
       let snapshotPath = path;
       let tempSnapshot = false;
       const stats = statSync2(path);
       if (stats.isDirectory()) {
-        const tempDir = mkdtempSync(join3(tmpdir(), "argus-"));
-        snapshotPath = join3(tempDir, "snapshot.txt");
-        const result = createSnapshot(path, snapshotPath, {
+        const tempDir = mkdtempSync(join4(tmpdir(), "argus-"));
+        snapshotPath = join4(tempDir, "snapshot.txt");
+        createEnhancedSnapshot(path, snapshotPath, {
           extensions: config.defaults.snapshotExtensions,
           excludePatterns: config.defaults.excludePatterns
         });
@@ -1310,7 +1560,7 @@ async function handleToolCall(name, args) {
           commands: result.commands
         };
       } finally {
-        if (tempSnapshot && existsSync3(snapshotPath)) {
+        if (tempSnapshot && existsSync4(snapshotPath)) {
           unlinkSync(snapshotPath);
         }
       }
@@ -1320,7 +1570,7 @@ async function handleToolCall(name, args) {
       const pattern = args.pattern;
       const caseInsensitive = args.caseInsensitive || false;
       const maxResults = args.maxResults || 50;
-      if (!existsSync3(path)) {
+      if (!existsSync4(path)) {
         throw new Error(`File not found: ${path}`);
       }
       const matches = searchDocument(path, pattern, { caseInsensitive, maxResults });
@@ -1335,12 +1585,12 @@ async function handleToolCall(name, args) {
     }
     case "create_snapshot": {
       const path = resolve(args.path);
-      const outputPath = args.outputPath ? resolve(args.outputPath) : join3(tmpdir(), `argus-snapshot-${Date.now()}.txt`);
+      const outputPath = args.outputPath ? resolve(args.outputPath) : join4(tmpdir(), `argus-snapshot-${Date.now()}.txt`);
       const extensions = args.extensions || config.defaults.snapshotExtensions;
-      if (!existsSync3(path)) {
+      if (!existsSync4(path)) {
         throw new Error(`Path not found: ${path}`);
       }
-      const result = createSnapshot(path, outputPath, {
+      const result = createEnhancedSnapshot(path, outputPath, {
         extensions,
         excludePatterns: config.defaults.excludePatterns
       });
@@ -1348,7 +1598,13 @@ async function handleToolCall(name, args) {
         outputPath: result.outputPath,
         fileCount: result.fileCount,
         totalLines: result.totalLines,
-        totalSize: result.totalSize
+        totalSize: result.totalSize,
+        enhanced: true,
+        metadata: "metadata" in result ? {
+          imports: result.metadata.imports.length,
+          exports: result.metadata.exports.length,
+          symbols: Object.keys(result.metadata.symbolIndex).length
+        } : void 0
       };
     }
     default:
