@@ -23,6 +23,7 @@ import {
   ProviderType,
 } from './core/config.js';
 import { createSnapshot, getSnapshotStats } from './core/snapshot.js';
+import { createEnhancedSnapshot } from './core/enhanced-snapshot.js';
 import { analyze, searchDocument } from './core/engine.js';
 import { createProvider, listProviderTypes, getProviderDisplayName } from './providers/index.js';
 import {
@@ -227,6 +228,7 @@ program
   .option('-o, --output <file>', 'Output file path')
   .option('-e, --extensions <exts>', 'File extensions to include (comma-separated)')
   .option('--exclude <patterns>', 'Patterns to exclude (comma-separated)')
+  .option('--enhanced', 'Include structural metadata (import graph, exports index)')
   .action((path: string, opts) => {
     const config = loadConfig();
     const resolvedPath = resolve(path);
@@ -250,15 +252,27 @@ program
       ? opts.exclude.split(',').map((p: string) => p.trim())
       : config.defaults.excludePatterns;
     
-    const result = createSnapshot(resolvedPath, outputPath, {
-      extensions,
-      excludePatterns,
-    });
+    if (opts.enhanced) {
+      console.log('   Mode: Enhanced (with import graph & exports index)');
+    }
+    
+    const result = opts.enhanced
+      ? createEnhancedSnapshot(resolvedPath, outputPath, { extensions, excludePatterns })
+      : createSnapshot(resolvedPath, outputPath, { extensions, excludePatterns });
     
     console.log(`\n✅ Snapshot created!`);
     console.log(`   Files: ${result.fileCount}`);
     console.log(`   Lines: ${result.totalLines.toLocaleString()}`);
     console.log(`   Size: ${formatSize(result.totalSize)}`);
+    
+    if (opts.enhanced && 'metadata' in result) {
+      const meta = result.metadata;
+      console.log(`\n📊 Structural Metadata:`);
+      console.log(`   Imports tracked: ${meta.imports.length}`);
+      console.log(`   Exports indexed: ${meta.exports.length}`);
+      console.log(`   Symbols indexed: ${Object.keys(meta.symbolIndex).length}`);
+    }
+    
     console.log(`\nAnalyze with:`);
     console.log(`   argus analyze ${outputPath} "Your query here"`);
   });

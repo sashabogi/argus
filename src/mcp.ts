@@ -10,7 +10,7 @@ import { loadConfig, validateConfig } from './core/config.js';
 import { createSnapshot } from './core/snapshot.js';
 import { analyze, searchDocument } from './core/engine.js';
 import { createProvider } from './providers/index.js';
-import { existsSync, statSync, mkdtempSync, writeFileSync, unlinkSync } from 'fs';
+import { existsSync, statSync, mkdtempSync, writeFileSync, unlinkSync, readFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join, resolve } from 'path';
 
@@ -35,6 +35,81 @@ interface MCPResponse {
 
 // Tool definitions - descriptions optimized for auto-invocation
 const TOOLS = [
+  {
+    name: 'find_importers',
+    description: `Find all files that import a given file or module. Zero AI cost.
+
+Use when you need to know:
+- What files depend on this module?
+- Who uses this function/component?
+- Impact analysis before refactoring
+
+Requires an enhanced snapshot with metadata (created with --enhanced flag).`,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        path: {
+          type: 'string',
+          description: 'Path to the snapshot file (.argus/snapshot.txt)',
+        },
+        target: {
+          type: 'string',
+          description: 'The file path to find importers of (e.g., "src/auth.ts")',
+        },
+      },
+      required: ['path', 'target'],
+    },
+  },
+  {
+    name: 'find_symbol',
+    description: `Find where a symbol (function, class, type, constant) is exported from. Zero AI cost.
+
+Use when you need to know:
+- Where is this function defined?
+- Which file exports this component?
+- Find the source of a type
+
+Requires an enhanced snapshot with metadata (created with --enhanced flag).`,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        path: {
+          type: 'string',
+          description: 'Path to the snapshot file (.argus/snapshot.txt)',
+        },
+        symbol: {
+          type: 'string',
+          description: 'The symbol name to find (e.g., "AuthProvider", "useAuth")',
+        },
+      },
+      required: ['path', 'symbol'],
+    },
+  },
+  {
+    name: 'get_file_deps',
+    description: `Get all dependencies (imports) of a specific file. Zero AI cost.
+
+Use when you need to understand:
+- What does this file depend on?
+- What modules need to be loaded?
+- Trace the dependency chain
+
+Requires an enhanced snapshot with metadata (created with --enhanced flag).`,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        path: {
+          type: 'string',
+          description: 'Path to the snapshot file (.argus/snapshot.txt)',
+        },
+        file: {
+          type: 'string',
+          description: 'The file path to get dependencies for (e.g., "src/app.tsx")',
+        },
+      },
+      required: ['path', 'file'],
+    },
+  },
   {
     name: 'analyze_codebase',
     description: `IMPORTANT: Use this tool INSTEAD of reading many files when you need to understand a codebase.
@@ -152,9 +227,183 @@ try {
   provider = null;
 }
 
+/**
+ * Parse metadata section from an enhanced snapshot
+ */
+function parseSnapshotMetadata(content: string): {
+  importGraph: Record<string, string[]>;
+  exportGraph: Record<string, string[]>;
+  symbolIndex: Record<string, string[]>;
+  exports: Array<{ file: string; symbol: string; type: string; line: number }>;
+} | null {
+  // Check if this is an enhanced snapshot
+  if (!content.includes('METADATA: IMPORT GRAPH')) {
+    return null;
+  }
+  
+  const importGraph: Record<string, string[]> = {};
+  const exportGraph: Record<string, string[]> = {};
+  const symbolIndex: Record<string, string[]> = {};
+  const exports: Array<{ file: string; symbol: string; type: string; line: number }> = [];
+  
+  // Parse import graph
+  const importSection = content.match(/METADATA: IMPORT GRAPH\n=+\n([\s\S]*?)\n\n=+\nMETADATA:/)?.[1] || '';
+  for (const block of importSection.split('\n\n')) {
+    const lines = block.trim().split('\n');
+    if (lines.length > 0 && lines[0].endsWith(':')) {
+      const file = lines[0].slice(0, -1);
+      importGraph[file] = lines.slice(1).map(l => l.replace(/^\s*→\s*/, '').trim()).filter(Boolean);
+    }
+  }
+  
+  // Parse export index (symbol → files)
+  const exportSection = content.match(/METADATA: EXPORT INDEX\n=+\n([\s\S]*?)\n\n=+\nMETADATA:/)?.[1] || '';
+  for (const line of exportSection.split('\n')) {
+    const match = line.match(/^([\w$]+):\s*(.+)$/);
+    if (match) {
+      symbolIndex[match[1]] = match[2].split(',').map(s => s.trim());
+    }
+  }
+  
+  // Parse who imports whom (reverse graph)
+  const whoImportsSection = content.match(/METADATA: WHO IMPORTS WHOM\n=+\n([\s\S]*)$/)?.[1] || '';
+  for (const block of whoImportsSection.split('\n\n')) {
+    const lines = block.trim().split('\n');
+    if (lines.length > 0 && lines[0].includes(' is imported by:')) {
+      const file = lines[0].replace(' is imported by:', '').trim();
+      exportGraph[file] = lines.slice(1).map(l => l.replace(/^\s*←\s*/, '').trim()).filter(Boolean);
+    }
+  }
+  
+  // Parse file exports
+  const fileExportsSection = content.match(/METADATA: FILE EXPORTS\n=+\n([\s\S]*?)\n\n=+\nMETADATA:/)?.[1] || '';
+  for (const line of fileExportsSection.split('\n')) {
+    const match = line.match(/^([^:]+):(\d+)\s*-\s*(\w+)\s+(.+)$/);
+    if (match) {
+      exports.push({
+        file: match[1],
+        line: parseInt(match[2]),
+        type: match[3],
+        symbol: match[4].split(' ')[0], // Take first word as symbol name
+      });
+    }
+  }
+  
+  return { importGraph, exportGraph, symbolIndex, exports };
+}
+
 // Handle tool calls
 async function handleToolCall(name: string, args: Record<string, unknown>): Promise<unknown> {
   switch (name) {
+    case 'find_importers': {
+      const path = resolve(args.path as string);
+      const target = args.target as string;
+      
+      if (!existsSync(path)) {
+        throw new Error(`File not found: ${path}`);
+      }
+      
+      const content = readFileSync(path, 'utf-8');
+      const metadata = parseSnapshotMetadata(content);
+      
+      if (!metadata) {
+        throw new Error('This snapshot does not have metadata. Create with: argus snapshot --enhanced');
+      }
+      
+      // Normalize the target path
+      const normalizedTarget = target.startsWith('./') ? target.slice(2) : target;
+      const targetVariants = [normalizedTarget, './' + normalizedTarget, normalizedTarget.replace(/\.(ts|tsx|js|jsx)$/, '')];
+      
+      // Find all files that import this target
+      const importers: string[] = [];
+      for (const [file, imports] of Object.entries(metadata.importGraph)) {
+        for (const imp of imports) {
+          if (targetVariants.some(v => imp === v || imp.endsWith('/' + v) || imp.includes(v))) {
+            importers.push(file);
+            break;
+          }
+        }
+      }
+      
+      // Also check the exportGraph (direct mapping)
+      for (const variant of targetVariants) {
+        if (metadata.exportGraph[variant]) {
+          importers.push(...metadata.exportGraph[variant]);
+        }
+      }
+      
+      const unique = [...new Set(importers)];
+      return {
+        target,
+        importedBy: unique,
+        count: unique.length,
+      };
+    }
+    
+    case 'find_symbol': {
+      const path = resolve(args.path as string);
+      const symbol = args.symbol as string;
+      
+      if (!existsSync(path)) {
+        throw new Error(`File not found: ${path}`);
+      }
+      
+      const content = readFileSync(path, 'utf-8');
+      const metadata = parseSnapshotMetadata(content);
+      
+      if (!metadata) {
+        throw new Error('This snapshot does not have metadata. Create with: argus snapshot --enhanced');
+      }
+      
+      // Look up in symbol index
+      const files = metadata.symbolIndex[symbol] || [];
+      
+      // Also find detailed export info
+      const exportDetails = metadata.exports.filter(e => e.symbol === symbol);
+      
+      return {
+        symbol,
+        exportedFrom: files,
+        details: exportDetails,
+        count: files.length,
+      };
+    }
+    
+    case 'get_file_deps': {
+      const path = resolve(args.path as string);
+      const file = args.file as string;
+      
+      if (!existsSync(path)) {
+        throw new Error(`File not found: ${path}`);
+      }
+      
+      const content = readFileSync(path, 'utf-8');
+      const metadata = parseSnapshotMetadata(content);
+      
+      if (!metadata) {
+        throw new Error('This snapshot does not have metadata. Create with: argus snapshot --enhanced');
+      }
+      
+      // Normalize the file path
+      const normalizedFile = file.startsWith('./') ? file.slice(2) : file;
+      const fileVariants = [normalizedFile, './' + normalizedFile];
+      
+      // Find imports for this file
+      let imports: string[] = [];
+      for (const variant of fileVariants) {
+        if (metadata.importGraph[variant]) {
+          imports = metadata.importGraph[variant];
+          break;
+        }
+      }
+      
+      return {
+        file,
+        imports,
+        count: imports.length,
+      };
+    }
+    
     case 'analyze_codebase': {
       if (!provider) {
         throw new Error('Argus not configured. Run `argus init` to set up.');
