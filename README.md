@@ -41,8 +41,8 @@ We encourage you to explore the original [Matryoshka](https://github.com/yogthos
 ### Installation
 
 ```bash
-# Install globally
-npm install -g https://github.com/sashabogi/argus/tarball/main
+# Install globally via npm
+npm install -g argus-mcp
 
 # Interactive setup (configures API keys and preferences)
 argus init
