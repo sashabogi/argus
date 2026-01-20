@@ -39,7 +39,7 @@ const program = new Command();
 program
   .name('argus')
   .description('Codebase Intelligence Beyond Context Limits')
-  .version('1.0.0');
+  .version('1.1.0');
 
 // ============================================================================
 // argus init
@@ -129,6 +129,26 @@ program
     console.log('  argus snapshot ./my-project -o snapshot.txt');
     console.log('  argus analyze snapshot.txt "What are the main modules?"');
     console.log('  argus mcp install  # Add to Claude Code');
+  });
+
+// ============================================================================
+// argus update
+// ============================================================================
+program
+  .command('update')
+  .description('Update Argus to the latest version')
+  .action(() => {
+    console.log('\n🔄 Updating Argus...\n');
+    
+    try {
+      execSync('npm install -g github:sashabogi/argus', { stdio: 'inherit' });
+      console.log('\n✅ Argus updated successfully!');
+      console.log('\nRun `argus --version` to check the new version.');
+    } catch (error) {
+      console.error('\n❌ Update failed. Try manually:');
+      console.error('   npm install -g github:sashabogi/argus');
+      process.exit(1);
+    }
   });
 
 // ============================================================================

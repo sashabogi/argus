@@ -41,8 +41,8 @@ We encourage you to explore the original [Matryoshka](https://github.com/yogthos
 ### Installation
 
 ```bash
-# Install globally
-npm install -g @hive-dev/argus
+# Install globally from GitHub
+npm install -g github:sashabogi/argus
 
 # Interactive setup (configures API keys and preferences)
 argus init
@@ -52,6 +52,11 @@ argus mcp install
 
 # Set up any project
 argus setup .
+```
+
+**To update Argus:**
+```bash
+argus update   # or: npm install -g github:sashabogi/argus
 ```
 
 ### How It Works
