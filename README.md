@@ -41,8 +41,8 @@ We encourage you to explore the original [Matryoshka](https://github.com/yogthos
 ### Installation
 
 ```bash
-# Install globally from GitHub
-npm install -g github:sashabogi/argus
+# Install globally
+npm install -g https://github.com/sashabogi/argus/tarball/main
 
 # Interactive setup (configures API keys and preferences)
 argus init
@@ -56,7 +56,7 @@ argus setup .
 
 **To update Argus:**
 ```bash
-argus update   # or: npm install -g github:sashabogi/argus
+argus update
 ```
 
 ### How It Works

@@ -1976,7 +1976,7 @@ function listProviderTypes() {
 // src/cli.ts
 init_onboarding();
 var program = new Command();
-program.name("argus").description("Codebase Intelligence Beyond Context Limits").version("1.1.0");
+program.name("argus").description("Codebase Intelligence Beyond Context Limits").version("1.2.0");
 program.command("init").description("Interactive setup wizard").action(async () => {
   console.log("\n\u{1F52E} Argus Setup Wizard\n");
   console.log("This will configure your AI provider and create ~/.argus/config.json\n");
@@ -2055,12 +2055,12 @@ program.command("init").description("Interactive setup wizard").action(async () 
 program.command("update").description("Update Argus to the latest version").action(() => {
   console.log("\n\u{1F504} Updating Argus...\n");
   try {
-    execSync("npm install -g github:sashabogi/argus", { stdio: "inherit" });
+    execSync("npm install -g https://github.com/sashabogi/argus/tarball/main", { stdio: "inherit" });
     console.log("\n\u2705 Argus updated successfully!");
     console.log("\nRun `argus --version` to check the new version.");
   } catch (error) {
     console.error("\n\u274C Update failed. Try manually:");
-    console.error("   npm install -g github:sashabogi/argus");
+    console.error("   npm install -g https://github.com/sashabogi/argus/tarball/main");
     process.exit(1);
   }
 });
