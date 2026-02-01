@@ -29,3 +29,7 @@ coverage/
 
 # Argus user config (contains API keys)
 .argus/
+
+# Internal planning docs
+docs/CLAUDE-MEM-ANALYSIS.md
+docs/UPGRADE-PLAN.md
