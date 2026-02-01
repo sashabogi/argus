@@ -1214,6 +1214,84 @@ import { tmpdir } from "os";
 import { join as join4, resolve } from "path";
 var TOOLS = [
   {
+    name: "__ARGUS_GUIDE",
+    description: `ARGUS CODEBASE INTELLIGENCE - Follow this workflow for codebase questions:
+
+STEP 1: Check for snapshot
+- Look for .argus/snapshot.txt in the project root
+- If missing, use create_snapshot first (saves to .argus/snapshot.txt)
+- Snapshots survive context compaction - create once, use forever
+
+STEP 2: Use zero-cost tools first (NO AI tokens consumed)
+- search_codebase: Fast regex search, returns file:line:content
+- find_symbol: Locate where functions/types/classes are exported
+- find_importers: Find all files that depend on a given file
+- get_file_deps: See what modules a file imports
+- get_context: Get lines of code around a specific location
+
+STEP 3: Use AI analysis only when zero-cost tools are insufficient
+- analyze_codebase: Deep reasoning across entire codebase (~500 tokens)
+- Use for architecture questions, pattern finding, complex relationships
+
+EFFICIENCY MATRIX:
+| Question Type              | Tool                    | Token Cost |
+|---------------------------|-------------------------|------------|
+| "Where is X defined?"     | find_symbol             | 0          |
+| "What uses this file?"    | find_importers          | 0          |
+| "Find all TODO comments"  | search_codebase         | 0          |
+| "Show context around L42" | get_context             | 0          |
+| "How does auth work?"     | analyze_codebase        | ~500       |
+
+SNAPSHOT FRESHNESS:
+- Snapshots don't auto-update (yet)
+- Re-run create_snapshot if files have changed significantly
+- Check snapshot timestamp in header to assess freshness`,
+    inputSchema: {
+      type: "object",
+      properties: {},
+      required: []
+    }
+  },
+  {
+    name: "get_context",
+    description: `Get lines of code around a specific location. Zero AI cost.
+
+Use AFTER search_codebase when you need more context around a match.
+Much more efficient than reading the entire file.
+
+Example workflow:
+1. search_codebase("handleAuth") -> finds src/auth.ts:42
+2. get_context(file="src/auth.ts", line=42, before=10, after=20)
+
+Returns the surrounding code with proper line numbers.`,
+    inputSchema: {
+      type: "object",
+      properties: {
+        path: {
+          type: "string",
+          description: "Path to the snapshot file (.argus/snapshot.txt)"
+        },
+        file: {
+          type: "string",
+          description: 'File path within the snapshot (e.g., "src/auth.ts")'
+        },
+        line: {
+          type: "number",
+          description: "Center line number to get context around"
+        },
+        before: {
+          type: "number",
+          description: "Lines to include before the target line (default: 10)"
+        },
+        after: {
+          type: "number",
+          description: "Lines to include after the target line (default: 10)"
+        }
+      },
+      required: ["path", "file", "line"]
+    }
+  },
+  {
     name: "find_importers",
     description: `Find all files that import a given file or module. Zero AI cost.
 
@@ -1605,6 +1683,59 @@ async function handleToolCall(name, args) {
           exports: result.metadata.exports.length,
           symbols: Object.keys(result.metadata.symbolIndex).length
         } : void 0
+      };
+    }
+    case "__ARGUS_GUIDE": {
+      return {
+        message: "This is a documentation tool. Read the description for Argus usage patterns.",
+        tools: TOOLS.map((t) => ({ name: t.name, purpose: t.description.split("\n")[0] })),
+        recommendation: "Start with search_codebase for most queries. Use analyze_codebase only for complex architecture questions."
+      };
+    }
+    case "get_context": {
+      const snapshotPath = resolve(args.path);
+      const targetFile = args.file;
+      const targetLine = args.line;
+      const beforeLines = args.before || 10;
+      const afterLines = args.after || 10;
+      if (!existsSync4(snapshotPath)) {
+        throw new Error(`Snapshot not found: ${snapshotPath}`);
+      }
+      const content = readFileSync5(snapshotPath, "utf-8");
+      const normalizedTarget = targetFile.replace(/^\.\//, "");
+      const fileMarkerVariants = [
+        `FILE: ./${normalizedTarget}`,
+        `FILE: ${normalizedTarget}`
+      ];
+      let fileStart = -1;
+      for (const marker of fileMarkerVariants) {
+        fileStart = content.indexOf(marker);
+        if (fileStart !== -1) break;
+      }
+      if (fileStart === -1) {
+        throw new Error(`File not found in snapshot: ${targetFile}`);
+      }
+      const nextFileStart = content.indexOf("\nFILE:", fileStart + 1);
+      const metadataStart = content.indexOf("\nMETADATA:", fileStart);
+      const fileEnd = Math.min(
+        nextFileStart === -1 ? Infinity : nextFileStart,
+        metadataStart === -1 ? Infinity : metadataStart
+      );
+      const fileContent = content.slice(fileStart, fileEnd === Infinity ? void 0 : fileEnd);
+      const fileLines = fileContent.split("\n").slice(2);
+      const startLine = Math.max(0, targetLine - beforeLines - 1);
+      const endLine = Math.min(fileLines.length, targetLine + afterLines);
+      const contextLines = fileLines.slice(startLine, endLine).map((line, idx) => {
+        const lineNum = startLine + idx + 1;
+        const marker = lineNum === targetLine ? ">>>" : "   ";
+        return `${marker} ${lineNum.toString().padStart(4)}: ${line}`;
+      });
+      return {
+        file: targetFile,
+        targetLine,
+        range: { start: startLine + 1, end: endLine },
+        content: contextLines.join("\n"),
+        totalLines: fileLines.length
       };
     }
     default:
