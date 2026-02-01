@@ -24,8 +24,8 @@ export function parseSnapshot(content: string): SnapshotData {
  * Parse the metadata sections from an enhanced snapshot
  */
 function parseMetadata(content: string): SnapshotMetadata | null {
-  // Check if this is an enhanced snapshot
-  if (!content.includes('=== IMPORT GRAPH ===')) {
+  // Check if this is an enhanced snapshot (new format uses METADATA: prefix)
+  if (!content.includes('METADATA: IMPORT GRAPH')) {
     return null;
   }
 
@@ -35,49 +35,100 @@ function parseMetadata(content: string): SnapshotMetadata | null {
   const symbolIndex: Record<string, string> = {};
 
   // Parse IMPORT GRAPH section
-  const importGraphMatch = content.match(/=== IMPORT GRAPH ===([\s\S]*?)(?===|$)/);
+  // Format:
+  // METADATA: IMPORT GRAPH
+  // ================================================================================
+  // src/file.ts:
+  //   -> imported/file.ts
+  const importGraphMatch = content.match(
+    /METADATA: IMPORT GRAPH\n={80}\n([\s\S]*?)(?=\n={80}\nMETADATA:|$)/
+  );
   if (importGraphMatch) {
-    const lines = importGraphMatch[1].trim().split('\n');
-    for (const line of lines) {
-      const match = line.match(/^(.+?) -> (.+)$/);
-      if (match) {
-        imports.push({ source: match[1], target: match[2] });
+    const section = importGraphMatch[1].trim();
+    let currentSource = '';
+
+    for (const line of section.split('\n')) {
+      // Source file line (ends with colon)
+      const sourceMatch = line.match(/^([^\s].+):$/);
+      if (sourceMatch) {
+        currentSource = sourceMatch[1];
+        continue;
+      }
+
+      // Import line (starts with spaces and arrow)
+      const importMatch = line.match(/^\s+->\s*(.+)$/);
+      if (importMatch && currentSource) {
+        imports.push({ source: currentSource, target: importMatch[1] });
       }
     }
   }
 
-  // Parse EXPORTS INDEX section
-  const exportsMatch = content.match(/=== EXPORTS INDEX ===([\s\S]*?)(?===|$)/);
-  if (exportsMatch) {
-    const lines = exportsMatch[1].trim().split('\n');
+  // Parse EXPORT INDEX section (symbol -> file mapping)
+  // Format:
+  // METADATA: EXPORT INDEX
+  // ================================================================================
+  // symbolName: src/file1.ts, src/file2.ts
+  const exportIndexMatch = content.match(
+    /METADATA: EXPORT INDEX\n={80}\n([\s\S]*?)(?=\n={80}\nMETADATA:|$)/
+  );
+  if (exportIndexMatch) {
+    const lines = exportIndexMatch[1].trim().split('\n');
     for (const line of lines) {
-      const match = line.match(/^(.+?): (.+)$/);
+      const match = line.match(/^([^:]+):\s*(.+)$/);
       if (match) {
-        const symbols = match[2].split(', ').map((s) => s.trim());
-        exports.push({ file: match[1], symbols });
+        const symbol = match[1].trim();
+        const filesStr = match[2].trim();
+        // Store in symbolIndex: symbol -> first file
+        const fileList = filesStr.split(',').map((s) => s.trim());
+        if (fileList.length > 0) {
+          symbolIndex[symbol] = fileList[0];
+        }
+        // Also store as export entry for backwards compatibility
+        exports.push({ file: symbol, symbols: fileList });
       }
     }
   }
 
-  // Parse SYMBOL INDEX section
-  const symbolMatch = content.match(/=== SYMBOL INDEX ===([\s\S]*?)(?===|$)/);
-  if (symbolMatch) {
-    const lines = symbolMatch[1].trim().split('\n');
+  // Parse FILE EXPORTS section if present
+  // Format:
+  // METADATA: FILE EXPORTS
+  // ================================================================================
+  // src/file.ts:10 - function myFunc
+  const fileExportsMatch = content.match(
+    /METADATA: FILE EXPORTS\n={80}\n([\s\S]*?)(?=\n={80}\nMETADATA:|$)/
+  );
+  if (fileExportsMatch) {
+    const lines = fileExportsMatch[1].trim().split('\n');
     for (const line of lines) {
-      const match = line.match(/^(.+?) -> (.+)$/);
+      const match = line.match(/^([^:]+):\d+\s*-\s*\w+\s+(\S+)/);
       if (match) {
-        symbolIndex[match[1]] = match[2];
+        const file = match[1].trim();
+        const symbol = match[2].split(' ')[0]; // Take first word as symbol
+        symbolIndex[symbol] = file;
       }
     }
   }
 
   // Extract file info from file headers
-  const fileHeaderRegex = /^={80}\n\/\/ File: (.+?) \((\d+) lines\)\n={80}/gm;
+  // Format:
+  // ================================================================================
+  // FILE: ./path/to/file.ts
+  // ================================================================================
+  const fileHeaderRegex = /^={80}\nFILE: \.\/(.+?)\n={80}/gm;
   let match;
   while ((match = fileHeaderRegex.exec(content)) !== null) {
     const path = match[1];
-    const lines = parseInt(match[2], 10);
     const extension = path.split('.').pop() || '';
+    // Count lines for this file by finding content until next file marker or metadata
+    const startIdx = match.index + match[0].length;
+    const nextFileIdx = content.indexOf('\n================================================================================\nFILE:', startIdx);
+    const metadataIdx = content.indexOf('\nMETADATA:', startIdx);
+    const endIdx = Math.min(
+      nextFileIdx === -1 ? content.length : nextFileIdx,
+      metadataIdx === -1 ? content.length : metadataIdx
+    );
+    const fileContent = content.slice(startIdx, endIdx);
+    const lines = fileContent.split('\n').length - 1; // -1 for trailing newline
     files.push({ path, lines, extension });
   }
 
@@ -89,11 +140,42 @@ function parseMetadata(content: string): SnapshotMetadata | null {
  */
 function parseFileContents(content: string): Map<string, string> {
   const fileContents = new Map<string, string>();
-  const fileRegex = /^={80}\n\/\/ File: (.+?) \(\d+ lines\)\n={80}\n([\s\S]*?)(?=^={80}|$)/gm;
 
-  let match;
-  while ((match = fileRegex.exec(content)) !== null) {
-    fileContents.set(match[1], match[2].trim());
+  // Split content by the separator line (80 = characters)
+  const separator = '='.repeat(80);
+  const sections = content.split(separator);
+
+  for (let i = 0; i < sections.length; i++) {
+    const section = sections[i];
+
+    // Check if this section starts with a FILE: header
+    const fileMatch = section.match(/^\nFILE: \.\/(.+?)\n$/);
+    if (fileMatch && i + 1 < sections.length) {
+      const filePath = fileMatch[1];
+      // The next section contains the file content (until the next separator)
+      let fileContent = sections[i + 1];
+
+      // Remove leading newline if present
+      if (fileContent.startsWith('\n')) {
+        fileContent = fileContent.slice(1);
+      }
+
+      // Remove trailing newline before next separator
+      if (fileContent.endsWith('\n')) {
+        fileContent = fileContent.slice(0, -1);
+      }
+
+      fileContents.set(filePath, fileContent);
+    }
+  }
+
+  // Also try legacy format for backwards compatibility: // File: path (N lines)
+  if (fileContents.size === 0) {
+    const legacyRegex = /^={80}\n\/\/ File: (.+?) \(\d+ lines\)\n={80}\n([\s\S]*?)(?=^={80}|$)/gm;
+    let match;
+    while ((match = legacyRegex.exec(content)) !== null) {
+      fileContents.set(match[1], match[2].trim());
+    }
   }
 
   return fileContents;
