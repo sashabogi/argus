@@ -65,14 +65,34 @@ export default function App() {
       });
     }
 
+    // Helper to find node with extension variants (.js -> .ts, .jsx -> .tsx, etc.)
+    const findNode = (path: string): string | null => {
+      if (nodeMap.has(path)) return path;
+      // Try common extension mappings
+      const variants = [
+        path.replace(/\.js$/, '.ts'),
+        path.replace(/\.jsx$/, '.tsx'),
+        path.replace(/\.mjs$/, '.ts'),
+        path.replace(/\.js$/, '.tsx'),
+        path.replace(/\.ts$/, '.js'),
+        path.replace(/\.tsx$/, '.jsx'),
+      ];
+      for (const variant of variants) {
+        if (nodeMap.has(variant)) return variant;
+      }
+      return null;
+    };
+
     // Add links from imports
     for (const imp of snapshot.metadata.imports) {
+      const source = findNode(imp.source);
+      const target = findNode(imp.target);
       // Only add if both source and target exist as nodes
-      if (nodeMap.has(imp.source) && nodeMap.has(imp.target)) {
-        const key = `${imp.source}->${imp.target}`;
+      if (source && target) {
+        const key = `${source}->${target}`;
         if (!linkSet.has(key)) {
           linkSet.add(key);
-          graphLinks.push({ source: imp.source, target: imp.target });
+          graphLinks.push({ source, target });
         }
       }
     }
