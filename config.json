@@ -1,0 +1,24 @@
+{
+  "id": "ws_e9781d6c",
+  "name": "argus",
+  "slug": "argus",
+  "defaults": {
+    "model": "claude-sonnet-4-5-20250929",
+    "permissionMode": "safe",
+    "cyclablePermissionModes": [
+      "safe",
+      "ask",
+      "allow-all"
+    ],
+    "thinkingLevel": "think",
+    "enabledSourceSlugs": [
+      "argus-files"
+    ],
+    "workingDirectory": "~/development/argus"
+  },
+  "localMcpServers": {
+    "enabled": true
+  },
+  "createdAt": 1769699808046,
+  "updatedAt": 1769699808052
+}

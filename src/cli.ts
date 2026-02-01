@@ -39,7 +39,7 @@ const program = new Command();
 program
   .name('argus')
   .description('Codebase Intelligence Beyond Context Limits')
-  .version('1.2.0');
+  .version('2.0.0');
 
 // ============================================================================
 // argus init
