@@ -1,6 +1,6 @@
 {
   "name": "@sashabogi/argus-mcp",
-  "version": "2.0.1",
+  "version": "2.0.2",
   "description": "Codebase Intelligence Beyond Context Limits - AI-powered analysis for entire projects",
   "main": "dist/index.js",
   "module": "dist/index.mjs",
