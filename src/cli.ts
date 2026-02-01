@@ -10,7 +10,7 @@ import * as fs from 'fs';
 import { homedir } from 'os';
 import { join, resolve, basename } from 'path';
 import * as path from 'path';
-import { execSync } from 'child_process';
+import { execSync, spawn } from 'child_process';
 
 import {
   loadConfig,
@@ -39,7 +39,7 @@ const program = new Command();
 program
   .name('argus')
   .description('Codebase Intelligence Beyond Context Limits')
-  .version('2.0.7');
+  .version('2.0.8');
 
 // ============================================================================
 // argus init
@@ -1211,8 +1211,7 @@ program
           console.log(`\nArgus UI running at http://localhost:${port}`);
 
           if (opts.open !== false) {
-            // Open browser using spawn for safety
-            const { spawn } = require('child_process');
+            // Open browser
             const openUrl = `http://localhost:${port}`;
             const openCmd = process.platform === 'darwin' ? 'open' :
                            process.platform === 'win32' ? 'start' : 'xdg-open';
@@ -1232,8 +1231,6 @@ program
         console.log(`   Running development server...`);
         console.log(`   Port: ${opts.port}`);
 
-        // Use spawn instead of execSync for safety
-        const { spawn } = require('child_process');
         const vite = spawn('npm', ['run', 'dev', '--', '--port', opts.port], {
           cwd: uiPath,
           stdio: 'inherit',

@@ -1,12 +1,6 @@
 #!/usr/bin/env node
 var __defProp = Object.defineProperty;
 var __getOwnPropNames = Object.getOwnPropertyNames;
-var __require = /* @__PURE__ */ ((x) => typeof require !== "undefined" ? require : typeof Proxy !== "undefined" ? new Proxy(x, {
-  get: (a, b) => (typeof require !== "undefined" ? require : a)[b]
-}) : x)(function(x) {
-  if (typeof require !== "undefined") return require.apply(this, arguments);
-  throw Error('Dynamic require of "' + x + '" is not supported');
-});
 var __esm = (fn, res) => function __init() {
   return fn && (res = (0, fn[__getOwnPropNames(fn)[0]])(fn = 0)), res;
 };
@@ -717,7 +711,7 @@ import * as fs from "fs";
 import { homedir as homedir2 } from "os";
 import { join as join4, resolve, basename as basename2 } from "path";
 import * as path2 from "path";
-import { execSync as execSync2 } from "child_process";
+import { execSync as execSync2, spawn } from "child_process";
 
 // src/core/config.ts
 init_esm_shims();
@@ -2136,7 +2130,7 @@ function listProviderTypes() {
 // src/cli.ts
 init_onboarding();
 var program = new Command();
-program.name("argus").description("Codebase Intelligence Beyond Context Limits").version("2.0.7");
+program.name("argus").description("Codebase Intelligence Beyond Context Limits").version("2.0.8");
 program.command("init").description("Interactive setup wizard").action(async () => {
   console.log("\n\u{1F52E} Argus Setup Wizard\n");
   console.log("This will configure your AI provider and create ~/.argus/config.json\n");
@@ -3004,7 +2998,6 @@ program.command("ui").description("Open the Argus web UI for codebase visualizat
         console.log(`
 Argus UI running at http://localhost:${port}`);
         if (opts.open !== false) {
-          const { spawn } = __require("child_process");
           const openUrl = `http://localhost:${port}`;
           const openCmd = process.platform === "darwin" ? "open" : process.platform === "win32" ? "start" : "xdg-open";
           spawn(openCmd, [openUrl], { detached: true, stdio: "ignore" }).unref();
@@ -3018,7 +3011,6 @@ Argus UI running at http://localhost:${port}`);
     } else {
       console.log(`   Running development server...`);
       console.log(`   Port: ${opts.port}`);
-      const { spawn } = __require("child_process");
       const vite = spawn("npm", ["run", "dev", "--", "--port", opts.port], {
         cwd: uiPath,
         stdio: "inherit"
