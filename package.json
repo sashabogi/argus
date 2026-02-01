@@ -1,6 +1,6 @@
 {
   "name": "@sashabogi/argus-mcp",
-  "version": "2.0.5",
+  "version": "2.0.6",
   "description": "Codebase Intelligence Beyond Context Limits - AI-powered analysis for entire projects",
   "main": "dist/index.js",
   "module": "dist/index.mjs",
@@ -10,7 +10,8 @@
     "argus-mcp": "dist/mcp.mjs"
   },
   "scripts": {
-    "build": "tsup",
+    "build": "tsup && npm run build:ui",
+    "build:ui": "cd packages/ui && npm install && npm run build",
     "dev": "tsup --watch",
     "lint": "eslint src/",
     "typecheck": "tsc --noEmit",
@@ -43,6 +44,7 @@
   },
   "files": [
     "dist",
+    "packages/ui/dist",
     "README.md",
     "LICENSE"
   ],
