@@ -39,7 +39,7 @@ const program = new Command();
 program
   .name('argus')
   .description('Codebase Intelligence Beyond Context Limits')
-  .version('2.0.12');
+  .version('2.0.15');
 
 // ============================================================================
 // argus init
@@ -1217,7 +1217,22 @@ program
             const ext = path.extname(filePath);
             const contentType = mimeTypes[ext] || 'application/octet-stream';
             const content = readFileSync(filePath);
-            res.writeHead(200, { 'Content-Type': contentType });
+
+            // Cache control: HTML should never be cached (always check for updates)
+            // Hashed assets (JS/CSS) can be cached long-term since hash changes on update
+            const isHtml = ext === '.html';
+            const isHashedAsset = filePath.includes('/assets/') && (ext === '.js' || ext === '.css');
+
+            const cacheControl = isHtml
+              ? 'no-cache, no-store, must-revalidate'
+              : isHashedAsset
+                ? 'public, max-age=31536000, immutable'
+                : 'public, max-age=3600';
+
+            res.writeHead(200, {
+              'Content-Type': contentType,
+              'Cache-Control': cacheControl,
+            });
             res.end(content);
           } else {
             res.writeHead(404);

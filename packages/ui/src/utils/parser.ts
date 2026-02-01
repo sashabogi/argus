@@ -34,16 +34,17 @@ function parseMetadata(content: string): SnapshotMetadata | null {
   const exports: Array<{ file: string; symbols: string[] }> = [];
   const symbolIndex: Record<string, string> = {};
 
-  // Parse IMPORT GRAPH section
+  // Parse IMPORT GRAPH section - find the LAST occurrence (metadata is at end of snapshot)
   // Format:
   // ================================================================================
   // METADATA: IMPORT GRAPH
   // ================================================================================
   // src/file.ts:
-  //   -> imported/file.ts
-  const importGraphMatch = content.match(
-    /METADATA: IMPORT GRAPH\n={80}\n([\s\S]*?)(?=\n\n={80}\nMETADATA:|={80}\nFILE:|$)/
-  );
+  //   → imported/file.ts
+  const importGraphRegex = /METADATA: IMPORT GRAPH\n={80}\n([\s\S]*?)(?=\n\n={80}\nMETADATA:|$)/g;
+  const allImportMatches = [...content.matchAll(importGraphRegex)];
+  const importGraphMatch = allImportMatches.length > 0 ? allImportMatches[allImportMatches.length - 1] : null;
+
   if (importGraphMatch) {
     const section = importGraphMatch[1].trim();
     let currentSource = '';
@@ -56,23 +57,24 @@ function parseMetadata(content: string): SnapshotMetadata | null {
         continue;
       }
 
-      // Import line (starts with spaces and arrow)
-      const importMatch = line.match(/^\s+->\s*(.+)$/);
+      // Import line (starts with spaces and arrow - supports both Unicode → and ASCII ->)
+      const importMatch = line.match(/^\s+(?:→|->)\s*(.+)$/);
       if (importMatch && currentSource) {
         imports.push({ source: currentSource, target: importMatch[1] });
       }
     }
   }
 
-  // Parse EXPORT INDEX section (symbol -> file mapping)
+  // Parse EXPORT INDEX section - find the LAST occurrence (metadata is at end of snapshot)
   // Format:
   // ================================================================================
   // METADATA: EXPORT INDEX
   // ================================================================================
   // symbolName: src/file1.ts, src/file2.ts
-  const exportIndexMatch = content.match(
-    /METADATA: EXPORT INDEX\n={80}\n([\s\S]*?)(?=\n\n={80}\nMETADATA:|={80}\nFILE:|$)/
-  );
+  const exportIndexRegex = /METADATA: EXPORT INDEX\n={80}\n([\s\S]*?)(?=\n\n={80}\nMETADATA:|$)/g;
+  const allExportMatches = [...content.matchAll(exportIndexRegex)];
+  const exportIndexMatch = allExportMatches.length > 0 ? allExportMatches[allExportMatches.length - 1] : null;
+
   if (exportIndexMatch) {
     const lines = exportIndexMatch[1].trim().split('\n');
     for (const line of lines) {
