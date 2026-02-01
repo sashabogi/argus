@@ -396,19 +396,22 @@ function getRecentChanges(projectPath: string): RecentChangeInfo[] | null {
  */
 function resolveImportPath(importPath: string, fromFile: string, projectFiles: string[]): string | undefined {
   if (!importPath.startsWith('.')) return undefined; // External module
-  
+
   const fromDir = dirname(fromFile);
   let resolved = join(fromDir, importPath);
-  
-  // Try with extensions
+
+  // Strip existing extension from import path (TypeScript compiles to .js but sources are .ts)
+  const basePath = resolved.replace(/\.(js|jsx|mjs|cjs)$/, '');
+
+  // Try with extensions - check both with and without ./ prefix
   const extensions = ['.ts', '.tsx', '.js', '.jsx', '', '/index.ts', '/index.tsx', '/index.js', '/index.jsx'];
   for (const ext of extensions) {
-    const candidate = resolved + ext;
+    const candidate = basePath + ext;
     if (projectFiles.includes(candidate) || projectFiles.includes('./' + candidate)) {
-      return candidate;
+      return candidate.startsWith('./') ? candidate.slice(2) : candidate;
     }
   }
-  
+
   return undefined;
 }
 

@@ -1201,11 +1201,12 @@ function resolveImportPath(importPath, fromFile, projectFiles) {
   if (!importPath.startsWith(".")) return void 0;
   const fromDir = dirname(fromFile);
   let resolved = join3(fromDir, importPath);
+  const basePath = resolved.replace(/\.(js|jsx|mjs|cjs)$/, "");
   const extensions = [".ts", ".tsx", ".js", ".jsx", "", "/index.ts", "/index.tsx", "/index.js", "/index.jsx"];
   for (const ext of extensions) {
-    const candidate = resolved + ext;
+    const candidate = basePath + ext;
     if (projectFiles.includes(candidate) || projectFiles.includes("./" + candidate)) {
-      return candidate;
+      return candidate.startsWith("./") ? candidate.slice(2) : candidate;
     }
   }
   return void 0;
@@ -2138,7 +2139,7 @@ function listProviderTypes() {
 // src/cli.ts
 init_onboarding();
 var program = new Command();
-program.name("argus").description("Codebase Intelligence Beyond Context Limits").version("2.0.11");
+program.name("argus").description("Codebase Intelligence Beyond Context Limits").version("2.0.12");
 program.command("init").description("Interactive setup wizard").action(async () => {
   console.log("\n\u{1F52E} Argus Setup Wizard\n");
   console.log("This will configure your AI provider and create ~/.argus/config.json\n");

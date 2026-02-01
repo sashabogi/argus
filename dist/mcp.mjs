@@ -669,11 +669,12 @@ function resolveImportPath(importPath, fromFile, projectFiles) {
   if (!importPath.startsWith(".")) return void 0;
   const fromDir = dirname(fromFile);
   let resolved = join3(fromDir, importPath);
+  const basePath = resolved.replace(/\.(js|jsx|mjs|cjs)$/, "");
   const extensions = [".ts", ".tsx", ".js", ".jsx", "", "/index.ts", "/index.tsx", "/index.js", "/index.jsx"];
   for (const ext of extensions) {
-    const candidate = resolved + ext;
+    const candidate = basePath + ext;
     if (projectFiles.includes(candidate) || projectFiles.includes("./" + candidate)) {
-      return candidate;
+      return candidate.startsWith("./") ? candidate.slice(2) : candidate;
     }
   }
   return void 0;
