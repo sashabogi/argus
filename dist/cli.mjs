@@ -2136,7 +2136,7 @@ function listProviderTypes() {
 // src/cli.ts
 init_onboarding();
 var program = new Command();
-program.name("argus").description("Codebase Intelligence Beyond Context Limits").version("2.0.6");
+program.name("argus").description("Codebase Intelligence Beyond Context Limits").version("2.0.7");
 program.command("init").description("Interactive setup wizard").action(async () => {
   console.log("\n\u{1F52E} Argus Setup Wizard\n");
   console.log("This will configure your AI provider and create ~/.argus/config.json\n");
@@ -2959,14 +2959,16 @@ ${CLAUDE_MD_ARGUS_SECTION}`;
 });
 program.command("ui").description("Open the Argus web UI for codebase visualization").option("-p, --port <port>", "Port to serve on", "3333").option("--no-open", "Do not open browser automatically").action(async (opts) => {
   const uiPath = join4(__dirname, "..", "packages", "ui");
-  if (!existsSync4(join4(uiPath, "package.json"))) {
-    console.error("Argus UI package not found.");
-    console.error("\nThe UI package needs to be installed separately:");
+  const distPath = join4(uiPath, "dist");
+  if (!existsSync4(distPath) || !existsSync4(join4(distPath, "index.html"))) {
+    console.error("Argus UI not found.");
+    console.error("\nIf installed from npm, try reinstalling:");
+    console.error("  npm install -g @sashabogi/argus-mcp@latest");
+    console.error("\nIf building from source:");
     console.error("  cd packages/ui && npm install && npm run build");
     process.exit(1);
   }
-  const distPath = join4(uiPath, "dist");
-  const hasBuiltUI = existsSync4(distPath);
+  const hasBuiltUI = true;
   console.log("Starting Argus UI...\n");
   try {
     if (hasBuiltUI) {

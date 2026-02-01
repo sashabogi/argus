@@ -39,7 +39,7 @@ const program = new Command();
 program
   .name('argus')
   .description('Codebase Intelligence Beyond Context Limits')
-  .version('2.0.6');
+  .version('2.0.7');
 
 // ============================================================================
 // argus init
@@ -1152,18 +1152,19 @@ program
   .option('--no-open', 'Do not open browser automatically')
   .action(async (opts) => {
     const uiPath = join(__dirname, '..', 'packages', 'ui');
+    const distPath = join(uiPath, 'dist');
 
-    // Check if UI package exists and is built
-    if (!existsSync(join(uiPath, 'package.json'))) {
-      console.error('Argus UI package not found.');
-      console.error('\nThe UI package needs to be installed separately:');
+    // Check if UI dist exists (either from npm bundle or local build)
+    if (!existsSync(distPath) || !existsSync(join(distPath, 'index.html'))) {
+      console.error('Argus UI not found.');
+      console.error('\nIf installed from npm, try reinstalling:');
+      console.error('  npm install -g @sashabogi/argus-mcp@latest');
+      console.error('\nIf building from source:');
       console.error('  cd packages/ui && npm install && npm run build');
       process.exit(1);
     }
 
-    // Check if built
-    const distPath = join(uiPath, 'dist');
-    const hasBuiltUI = existsSync(distPath);
+    const hasBuiltUI = true;
 
     console.log('Starting Argus UI...\n');
 
