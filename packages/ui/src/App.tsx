@@ -18,14 +18,23 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<Tab>('graph');
   const [isDragging, setIsDragging] = useState(false);
 
-  // Parse query params for snapshot path (future feature for URL-based loading)
+  // Auto-load snapshot from local server on startup
   useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const _snapshotPath = params.get('snapshot');
-    // Future: Could fetch snapshot from a local server endpoint
-    if (_snapshotPath) {
-      console.log('Snapshot path from URL:', _snapshotPath);
-    }
+    const loadLocalSnapshot = async () => {
+      try {
+        const response = await fetch('/api/snapshot');
+        if (response.ok) {
+          const content = await response.text();
+          const parsed = parseSnapshot(content);
+          setSnapshot(parsed);
+          console.log('Auto-loaded local snapshot');
+        }
+      } catch (error) {
+        // No local snapshot available, user will need to upload manually
+        console.log('No local snapshot found, waiting for manual upload');
+      }
+    };
+    loadLocalSnapshot();
   }, []);
 
   // Build file tree from snapshot

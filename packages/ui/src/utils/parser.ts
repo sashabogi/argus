@@ -36,12 +36,13 @@ function parseMetadata(content: string): SnapshotMetadata | null {
 
   // Parse IMPORT GRAPH section
   // Format:
+  // ================================================================================
   // METADATA: IMPORT GRAPH
   // ================================================================================
   // src/file.ts:
   //   -> imported/file.ts
   const importGraphMatch = content.match(
-    /METADATA: IMPORT GRAPH\n={80}\n([\s\S]*?)(?=\n={80}\nMETADATA:|$)/
+    /METADATA: IMPORT GRAPH\n={80}\n([\s\S]*?)(?=\n\n={80}\nMETADATA:|={80}\nFILE:|$)/
   );
   if (importGraphMatch) {
     const section = importGraphMatch[1].trim();
@@ -65,11 +66,12 @@ function parseMetadata(content: string): SnapshotMetadata | null {
 
   // Parse EXPORT INDEX section (symbol -> file mapping)
   // Format:
+  // ================================================================================
   // METADATA: EXPORT INDEX
   // ================================================================================
   // symbolName: src/file1.ts, src/file2.ts
   const exportIndexMatch = content.match(
-    /METADATA: EXPORT INDEX\n={80}\n([\s\S]*?)(?=\n={80}\nMETADATA:|$)/
+    /METADATA: EXPORT INDEX\n={80}\n([\s\S]*?)(?=\n\n={80}\nMETADATA:|={80}\nFILE:|$)/
   );
   if (exportIndexMatch) {
     const lines = exportIndexMatch[1].trim().split('\n');
@@ -91,11 +93,12 @@ function parseMetadata(content: string): SnapshotMetadata | null {
 
   // Parse FILE EXPORTS section if present
   // Format:
+  // ================================================================================
   // METADATA: FILE EXPORTS
   // ================================================================================
   // src/file.ts:10 - function myFunc
   const fileExportsMatch = content.match(
-    /METADATA: FILE EXPORTS\n={80}\n([\s\S]*?)(?=\n={80}\nMETADATA:|$)/
+    /METADATA: FILE EXPORTS\n={80}\n([\s\S]*?)(?=\n\n={80}\nMETADATA:|={80}\nFILE:|$)/
   );
   if (fileExportsMatch) {
     const lines = fileExportsMatch[1].trim().split('\n');

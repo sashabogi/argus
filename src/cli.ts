@@ -39,7 +39,7 @@ const program = new Command();
 program
   .name('argus')
   .description('Codebase Intelligence Beyond Context Limits')
-  .version('2.0.9');
+  .version('2.0.10');
 
 // ============================================================================
 // argus init
@@ -1187,7 +1187,26 @@ program
         };
 
         const server = http.createServer((req, res) => {
-          let filePath = join(distPath, req.url === '/' ? 'index.html' : req.url || '');
+          const url = new URL(req.url || '/', `http://localhost`);
+
+          // API endpoint to serve local snapshot
+          if (url.pathname === '/api/snapshot') {
+            const snapshotPath = join(process.cwd(), '.argus', 'snapshot.txt');
+            if (existsSync(snapshotPath)) {
+              const content = readFileSync(snapshotPath, 'utf-8');
+              res.writeHead(200, {
+                'Content-Type': 'text/plain',
+                'Access-Control-Allow-Origin': '*',
+              });
+              res.end(content);
+            } else {
+              res.writeHead(404, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify({ error: 'No snapshot found at .argus/snapshot.txt' }));
+            }
+            return;
+          }
+
+          let filePath = join(distPath, url.pathname === '/' ? 'index.html' : url.pathname);
 
           // Handle SPA routing - serve index.html for non-file routes
           if (!existsSync(filePath) && !filePath.includes('.')) {

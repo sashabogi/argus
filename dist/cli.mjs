@@ -2138,7 +2138,7 @@ function listProviderTypes() {
 // src/cli.ts
 init_onboarding();
 var program = new Command();
-program.name("argus").description("Codebase Intelligence Beyond Context Limits").version("2.0.9");
+program.name("argus").description("Codebase Intelligence Beyond Context Limits").version("2.0.10");
 program.command("init").description("Interactive setup wizard").action(async () => {
   console.log("\n\u{1F52E} Argus Setup Wizard\n");
   console.log("This will configure your AI provider and create ~/.argus/config.json\n");
@@ -2986,7 +2986,23 @@ program.command("ui").description("Open the Argus web UI for codebase visualizat
         ".svg": "image/svg+xml"
       };
       const server = http.createServer((req, res) => {
-        let filePath = join4(distPath, req.url === "/" ? "index.html" : req.url || "");
+        const url = new URL(req.url || "/", `http://localhost`);
+        if (url.pathname === "/api/snapshot") {
+          const snapshotPath = join4(process.cwd(), ".argus", "snapshot.txt");
+          if (existsSync4(snapshotPath)) {
+            const content = readFileSync5(snapshotPath, "utf-8");
+            res.writeHead(200, {
+              "Content-Type": "text/plain",
+              "Access-Control-Allow-Origin": "*"
+            });
+            res.end(content);
+          } else {
+            res.writeHead(404, { "Content-Type": "application/json" });
+            res.end(JSON.stringify({ error: "No snapshot found at .argus/snapshot.txt" }));
+          }
+          return;
+        }
+        let filePath = join4(distPath, url.pathname === "/" ? "index.html" : url.pathname);
         if (!existsSync4(filePath) && !filePath.includes(".")) {
           filePath = join4(distPath, "index.html");
         }
