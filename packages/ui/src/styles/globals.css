@@ -1,0 +1,77 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body {
+    @apply bg-argus-darker text-argus-text antialiased;
+    font-family: 'JetBrains Mono', 'SF Mono', 'Fira Code', ui-monospace, monospace;
+  }
+
+  ::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+
+  ::-webkit-scrollbar-track {
+    @apply bg-argus-darker;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    @apply bg-argus-border rounded;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    @apply bg-argus-muted;
+  }
+}
+
+@layer components {
+  .file-tree-item {
+    @apply flex items-center gap-2 px-2 py-1 cursor-pointer rounded hover:bg-argus-dark transition-colors;
+  }
+
+  .file-tree-item.selected {
+    @apply bg-argus-dark border-l-2 border-argus-accent;
+  }
+
+  .node-circle {
+    cursor: pointer;
+    transition: all 0.2s ease;
+  }
+
+  .node-circle:hover {
+    filter: brightness(1.2);
+    transform: scale(1.1);
+  }
+
+  .link-line {
+    stroke: #30363d;
+    stroke-opacity: 0.6;
+    fill: none;
+  }
+
+  .search-input {
+    @apply w-full px-4 py-2 bg-argus-dark border border-argus-border rounded-lg text-argus-text placeholder-argus-muted focus:outline-none focus:border-argus-accent transition-colors;
+  }
+
+  .panel {
+    @apply bg-argus-dark border border-argus-border rounded-lg;
+  }
+
+  .panel-header {
+    @apply px-4 py-3 border-b border-argus-border font-semibold text-sm uppercase tracking-wider text-argus-muted;
+  }
+
+  .stat-card {
+    @apply bg-argus-dark border border-argus-border rounded-lg p-4;
+  }
+
+  .stat-value {
+    @apply text-2xl font-bold text-argus-accent;
+  }
+
+  .stat-label {
+    @apply text-sm text-argus-muted;
+  }
+}

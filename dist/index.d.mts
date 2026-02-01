@@ -1,3 +1,6 @@
+import * as http from 'http';
+import * as express_serve_static_core from 'express-serve-static-core';
+
 /**
  * Argus Onboarding Module
  *
@@ -238,4 +241,70 @@ declare function getProviderDisplayName(type: ProviderType): string;
  */
 declare function listProviderTypes(): ProviderType[];
 
-export { type AIProvider, type ProviderConfig as AIProviderConfig, type AnalysisOptions, type AnalysisResult, type ArgusConfig, type CompletionOptions, type CompletionResult, type ProviderConfig as CoreProviderConfig, type Message, PROVIDER_DEFAULTS, type ProviderType, type SnapshotOptions, type SnapshotResult, analyze, createAnthropicProvider, createDeepSeekProvider, createOllamaProvider, createOpenAIProvider, createProvider, createProviderByType, createSnapshot, createZAIProvider, ensureConfigDir, getConfigPath, getProviderConfig, getProviderDisplayName, getSnapshotStats, listProviderTypes, loadConfig, saveConfig, searchDocument, validateConfig };
+interface CachedSnapshot {
+    path: string;
+    content: string;
+    lines: string[];
+    fileIndex: Map<string, {
+        start: number;
+        end: number;
+    }>;
+    loadedAt: Date;
+    fileCount: number;
+    mtime: number;
+}
+declare class SnapshotCache {
+    private cache;
+    private accessOrder;
+    private maxSize;
+    constructor(options: {
+        maxSize: number;
+    });
+    get size(): number;
+    load(path: string): Promise<CachedSnapshot>;
+    invalidate(path: string): void;
+    search(path: string, pattern: string, options?: {
+        caseInsensitive?: boolean;
+        maxResults?: number;
+        offset?: number;
+    }): {
+        matches: Array<{
+            lineNum: number;
+            line: string;
+            match: string;
+        }>;
+        count: number;
+    };
+    getContext(path: string, file: string, line: number, before?: number, after?: number): {
+        content: string;
+        range: {
+            start: number;
+            end: number;
+        };
+    };
+    private buildFileIndex;
+    private touchAccess;
+}
+
+declare class ProjectWatcher {
+    private projectPath;
+    private snapshotPath;
+    private onUpdate;
+    private debounceMs;
+    private watcher;
+    private debounceTimer;
+    private changedFiles;
+    constructor(projectPath: string, snapshotPath: string, onUpdate: (changedFiles: string[]) => void, debounceMs?: number);
+    private start;
+    private scheduleUpdate;
+    close(): void;
+}
+
+declare function startWorker(): {
+    app: express_serve_static_core.Express;
+    server: http.Server<typeof http.IncomingMessage, typeof http.ServerResponse>;
+    cache: SnapshotCache;
+    watchers: Map<string, ProjectWatcher>;
+};
+
+export { type AIProvider, type ProviderConfig as AIProviderConfig, type AnalysisOptions, type AnalysisResult, type ArgusConfig, type CompletionOptions, type CompletionResult, type ProviderConfig as CoreProviderConfig, type Message, PROVIDER_DEFAULTS, ProjectWatcher, type ProviderType, SnapshotCache, type SnapshotOptions, type SnapshotResult, analyze, createAnthropicProvider, createDeepSeekProvider, createOllamaProvider, createOpenAIProvider, createProvider, createProviderByType, createSnapshot, createZAIProvider, ensureConfigDir, getConfigPath, getProviderConfig, getProviderDisplayName, getSnapshotStats, listProviderTypes, loadConfig, saveConfig, searchDocument, startWorker, validateConfig };

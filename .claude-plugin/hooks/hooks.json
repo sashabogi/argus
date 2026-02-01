@@ -1,0 +1,19 @@
+{
+  "hooks": [
+    {
+      "name": "session-start",
+      "trigger": "SessionStart",
+      "script": "../scripts/session-start.js",
+      "description": "Check snapshot freshness on session start"
+    },
+    {
+      "name": "post-file-write",
+      "trigger": "PostToolUse",
+      "filter": {
+        "tools": ["Write", "Edit"]
+      },
+      "script": "../scripts/post-tool.js",
+      "description": "Mark snapshot as potentially stale after file modifications"
+    }
+  ]
+}

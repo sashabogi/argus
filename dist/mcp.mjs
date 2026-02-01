@@ -1,9 +1,219 @@
 #!/usr/bin/env node
+var __defProp = Object.defineProperty;
+var __getOwnPropNames = Object.getOwnPropertyNames;
+var __esm = (fn, res) => function __init() {
+  return fn && (res = (0, fn[__getOwnPropNames(fn)[0]])(fn = 0)), res;
+};
+var __export = (target, all) => {
+  for (var name in all)
+    __defProp(target, name, { get: all[name], enumerable: true });
+};
+
+// node_modules/tsup/assets/esm_shims.js
+var init_esm_shims = __esm({
+  "node_modules/tsup/assets/esm_shims.js"() {
+    "use strict";
+  }
+});
+
+// src/core/semantic-search.ts
+var semantic_search_exports = {};
+__export(semantic_search_exports, {
+  SemanticIndex: () => SemanticIndex
+});
+import Database from "better-sqlite3";
+import { existsSync as existsSync4, mkdirSync as mkdirSync2, readFileSync as readFileSync5 } from "fs";
+import { dirname as dirname2 } from "path";
+var SemanticIndex;
+var init_semantic_search = __esm({
+  "src/core/semantic-search.ts"() {
+    "use strict";
+    init_esm_shims();
+    SemanticIndex = class {
+      db;
+      initialized = false;
+      constructor(dbPath) {
+        const dir = dirname2(dbPath);
+        if (!existsSync4(dir)) {
+          mkdirSync2(dir, { recursive: true });
+        }
+        this.db = new Database(dbPath);
+        this.initialize();
+      }
+      initialize() {
+        if (this.initialized) return;
+        this.db.exec(`
+      CREATE VIRTUAL TABLE IF NOT EXISTS code_index USING fts5(
+        file,
+        symbol,
+        content,
+        type,
+        tokenize='porter unicode61'
+      );
+    `);
+        this.db.exec(`
+      CREATE TABLE IF NOT EXISTS index_metadata (
+        key TEXT PRIMARY KEY,
+        value TEXT
+      );
+    `);
+        this.initialized = true;
+      }
+      /**
+       * Clear the index and rebuild from scratch
+       */
+      clear() {
+        this.db.exec("DELETE FROM code_index");
+      }
+      /**
+       * Index a file's symbols and content
+       */
+      indexFile(file, symbols) {
+        const insert = this.db.prepare(`
+      INSERT INTO code_index (file, symbol, content, type)
+      VALUES (?, ?, ?, ?)
+    `);
+        const tx = this.db.transaction(() => {
+          for (const sym of symbols) {
+            insert.run(file, sym.name, sym.content, sym.type);
+          }
+        });
+        tx();
+      }
+      /**
+       * Index content from a snapshot file
+       */
+      indexFromSnapshot(snapshotPath) {
+        const content = readFileSync5(snapshotPath, "utf-8");
+        this.clear();
+        let filesIndexed = 0;
+        let symbolsIndexed = 0;
+        const fileRegex = /^FILE: \.\/(.+)$/gm;
+        const files = [];
+        let match;
+        while ((match = fileRegex.exec(content)) !== null) {
+          if (files.length > 0) {
+            files[files.length - 1].end = match.index;
+          }
+          files.push({ path: match[1], start: match.index, end: content.length });
+        }
+        const metadataStart = content.indexOf("\nMETADATA:");
+        if (metadataStart !== -1 && files.length > 0) {
+          files[files.length - 1].end = metadataStart;
+        }
+        for (const file of files) {
+          const fileContent = content.slice(file.start, file.end);
+          const lines = fileContent.split("\n").slice(2);
+          const symbols = [];
+          for (let i = 0; i < lines.length; i++) {
+            const line = lines[i];
+            const funcMatch = line.match(/(?:export\s+)?(?:async\s+)?function\s+(\w+)/);
+            if (funcMatch) {
+              symbols.push({
+                name: funcMatch[1],
+                content: lines.slice(i, Math.min(i + 10, lines.length)).join("\n"),
+                type: "function"
+              });
+            }
+            const arrowMatch = line.match(/(?:export\s+)?const\s+(\w+)\s*=\s*(?:async\s+)?\([^)]*\)\s*=>/);
+            if (arrowMatch) {
+              symbols.push({
+                name: arrowMatch[1],
+                content: lines.slice(i, Math.min(i + 10, lines.length)).join("\n"),
+                type: "function"
+              });
+            }
+            const classMatch = line.match(/(?:export\s+)?class\s+(\w+)/);
+            if (classMatch) {
+              symbols.push({
+                name: classMatch[1],
+                content: lines.slice(i, Math.min(i + 15, lines.length)).join("\n"),
+                type: "class"
+              });
+            }
+            const typeMatch = line.match(/(?:export\s+)?(?:type|interface)\s+(\w+)/);
+            if (typeMatch) {
+              symbols.push({
+                name: typeMatch[1],
+                content: lines.slice(i, Math.min(i + 10, lines.length)).join("\n"),
+                type: "type"
+              });
+            }
+            const constMatch = line.match(/(?:export\s+)?const\s+(\w+)\s*=\s*(?![^(]*=>)/);
+            if (constMatch && !arrowMatch) {
+              symbols.push({
+                name: constMatch[1],
+                content: lines.slice(i, Math.min(i + 5, lines.length)).join("\n"),
+                type: "const"
+              });
+            }
+          }
+          if (symbols.length > 0) {
+            this.indexFile(file.path, symbols);
+            filesIndexed++;
+            symbolsIndexed += symbols.length;
+          }
+        }
+        this.db.prepare(`
+      INSERT OR REPLACE INTO index_metadata (key, value) VALUES (?, ?)
+    `).run("last_indexed", (/* @__PURE__ */ new Date()).toISOString());
+        this.db.prepare(`
+      INSERT OR REPLACE INTO index_metadata (key, value) VALUES (?, ?)
+    `).run("snapshot_path", snapshotPath);
+        return { filesIndexed, symbolsIndexed };
+      }
+      /**
+       * Search the index
+       */
+      search(query, limit = 20) {
+        const ftsQuery = query.split(/\s+/).map((term) => `${term}*`).join(" ");
+        try {
+          const stmt = this.db.prepare(`
+        SELECT file, symbol, content, type, rank
+        FROM code_index
+        WHERE code_index MATCH ?
+        ORDER BY rank
+        LIMIT ?
+      `);
+          return stmt.all(ftsQuery, limit);
+        } catch {
+          const stmt = this.db.prepare(`
+        SELECT file, symbol, content, type, 0 as rank
+        FROM code_index
+        WHERE symbol LIKE ? OR content LIKE ?
+        ORDER BY symbol
+        LIMIT ?
+      `);
+          const likePattern = `%${query}%`;
+          return stmt.all(likePattern, likePattern, limit);
+        }
+      }
+      /**
+       * Get index statistics
+       */
+      getStats() {
+        const countResult = this.db.prepare("SELECT COUNT(*) as count FROM code_index").get();
+        const lastIndexed = this.db.prepare("SELECT value FROM index_metadata WHERE key = 'last_indexed'").get();
+        const snapshotPath = this.db.prepare("SELECT value FROM index_metadata WHERE key = 'snapshot_path'").get();
+        return {
+          totalSymbols: countResult.count,
+          lastIndexed: lastIndexed?.value || null,
+          snapshotPath: snapshotPath?.value || null
+        };
+      }
+      close() {
+        this.db.close();
+      }
+    };
+  }
+});
 
 // src/mcp.ts
+init_esm_shims();
 import { createInterface } from "readline";
 
 // src/core/config.ts
+init_esm_shims();
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
 import { homedir } from "os";
 import { join } from "path";
@@ -80,10 +290,13 @@ function validateConfig(config2) {
 }
 
 // src/core/enhanced-snapshot.ts
+init_esm_shims();
 import { readFileSync as readFileSync3, writeFileSync as writeFileSync3 } from "fs";
-import { join as join3, dirname, extname as extname2 } from "path";
+import { join as join3, dirname, extname as extname2, basename } from "path";
+import { execSync } from "child_process";
 
 // src/core/snapshot.ts
+init_esm_shims();
 import { existsSync as existsSync2, readFileSync as readFileSync2, readdirSync, statSync, writeFileSync as writeFileSync2 } from "fs";
 import { join as join2, relative, extname } from "path";
 var DEFAULT_OPTIONS = {
@@ -344,6 +557,114 @@ function parseExports(content, filePath) {
   }
   return exports;
 }
+function calculateComplexity(content) {
+  const patterns = [
+    /\bif\s*\(/g,
+    /\belse\s+if\s*\(/g,
+    /\bwhile\s*\(/g,
+    /\bfor\s*\(/g,
+    /\bcase\s+/g,
+    /\?\s*.*\s*:/g,
+    /\&\&/g,
+    /\|\|/g,
+    /\bcatch\s*\(/g
+  ];
+  let complexity = 1;
+  for (const pattern of patterns) {
+    const matches = content.match(pattern);
+    if (matches) complexity += matches.length;
+  }
+  return complexity;
+}
+function getComplexityLevel(score) {
+  if (score <= 10) return "low";
+  if (score <= 20) return "medium";
+  return "high";
+}
+function mapTestFiles(files) {
+  const testMap = {};
+  const testPatterns = [
+    // Same directory patterns
+    (src) => src.replace(/\.tsx?$/, ".test.ts"),
+    (src) => src.replace(/\.tsx?$/, ".test.tsx"),
+    (src) => src.replace(/\.tsx?$/, ".spec.ts"),
+    (src) => src.replace(/\.tsx?$/, ".spec.tsx"),
+    (src) => src.replace(/\.jsx?$/, ".test.js"),
+    (src) => src.replace(/\.jsx?$/, ".test.jsx"),
+    (src) => src.replace(/\.jsx?$/, ".spec.js"),
+    (src) => src.replace(/\.jsx?$/, ".spec.jsx"),
+    // __tests__ directory pattern
+    (src) => {
+      const dir = dirname(src);
+      const base = basename(src).replace(/\.(tsx?|jsx?)$/, "");
+      return join3(dir, "__tests__", `${base}.test.ts`);
+    },
+    (src) => {
+      const dir = dirname(src);
+      const base = basename(src).replace(/\.(tsx?|jsx?)$/, "");
+      return join3(dir, "__tests__", `${base}.test.tsx`);
+    },
+    // test/ directory pattern
+    (src) => src.replace(/^src\//, "test/").replace(/\.(tsx?|jsx?)$/, ".test.ts"),
+    (src) => src.replace(/^src\//, "tests/").replace(/\.(tsx?|jsx?)$/, ".test.ts")
+  ];
+  const fileSet = new Set(files);
+  for (const file of files) {
+    if (file.includes(".test.") || file.includes(".spec.") || file.includes("__tests__")) continue;
+    if (!/\.(tsx?|jsx?)$/.test(file)) continue;
+    const tests = [];
+    for (const pattern of testPatterns) {
+      const testPath = pattern(file);
+      if (testPath !== file && fileSet.has(testPath)) {
+        tests.push(testPath);
+      }
+    }
+    if (tests.length > 0) {
+      testMap[file] = [...new Set(tests)];
+    }
+  }
+  return testMap;
+}
+function getRecentChanges(projectPath) {
+  try {
+    execSync("git rev-parse --git-dir", { cwd: projectPath, encoding: "utf-8", stdio: "pipe" });
+    const output = execSync(
+      'git log --since="7 days ago" --name-only --format="COMMIT_AUTHOR:%an" --diff-filter=ACMR',
+      { cwd: projectPath, encoding: "utf-8", maxBuffer: 10 * 1024 * 1024, stdio: "pipe" }
+    );
+    if (!output.trim()) return [];
+    const fileStats = {};
+    let currentAuthor = "";
+    let currentCommitId = 0;
+    for (const line of output.split("\n")) {
+      const trimmed = line.trim();
+      if (!trimmed) {
+        currentCommitId++;
+        continue;
+      }
+      if (trimmed.startsWith("COMMIT_AUTHOR:")) {
+        currentAuthor = trimmed.replace("COMMIT_AUTHOR:", "");
+        continue;
+      }
+      const file = trimmed;
+      if (!fileStats[file]) {
+        fileStats[file] = { commits: /* @__PURE__ */ new Set(), authors: /* @__PURE__ */ new Set() };
+      }
+      fileStats[file].commits.add(`${currentCommitId}`);
+      if (currentAuthor) {
+        fileStats[file].authors.add(currentAuthor);
+      }
+    }
+    const result = Object.entries(fileStats).map(([file, stats]) => ({
+      file,
+      commits: stats.commits.size,
+      authors: stats.authors.size
+    })).sort((a, b) => b.commits - a.commits);
+    return result;
+  } catch {
+    return null;
+  }
+}
 function resolveImportPath(importPath, fromFile, projectFiles) {
   if (!importPath.startsWith(".")) return void 0;
   const fromDir = dirname(fromFile);
@@ -413,6 +734,23 @@ function createEnhancedSnapshot(projectPath, outputPath, options = {}) {
       symbolIndex[exp.symbol].push(exp.file);
     }
   }
+  const complexityScores = [];
+  for (const [relPath, metadata] of Object.entries(fileIndex)) {
+    const fullPath = join3(projectPath, relPath);
+    try {
+      const content = readFileSync3(fullPath, "utf-8");
+      const score = calculateComplexity(content);
+      complexityScores.push({
+        file: relPath,
+        score,
+        level: getComplexityLevel(score)
+      });
+    } catch {
+    }
+  }
+  complexityScores.sort((a, b) => b.score - a.score);
+  const testFileMap = mapTestFiles(baseResult.files);
+  const recentChanges = getRecentChanges(projectPath);
   const metadataSection = `
 
 ================================================================================
@@ -436,6 +774,25 @@ METADATA: WHO IMPORTS WHOM
 ================================================================================
 ${Object.entries(exportGraph).map(([file, importers]) => `${file} is imported by:
 ${importers.map((i) => `  \u2190 ${i}`).join("\n")}`).join("\n\n")}
+
+================================================================================
+METADATA: COMPLEXITY SCORES
+================================================================================
+${complexityScores.map((c) => `${c.file}: ${c.score} (${c.level})`).join("\n")}
+
+================================================================================
+METADATA: TEST COVERAGE MAP
+================================================================================
+${Object.entries(testFileMap).length > 0 ? Object.entries(testFileMap).map(([src, tests]) => `${src} -> ${tests.join(", ")}`).join("\n") : "(no test file mappings found)"}
+${baseResult.files.filter(
+    (f) => /\.(tsx?|jsx?)$/.test(f) && !f.includes(".test.") && !f.includes(".spec.") && !f.includes("__tests__") && !testFileMap[f]
+  ).map((f) => `${f} -> (no tests)`).join("\n")}
+${recentChanges !== null ? `
+
+================================================================================
+METADATA: RECENT CHANGES (last 7 days)
+================================================================================
+${recentChanges.length > 0 ? recentChanges.map((c) => `${c.file}: ${c.commits} commit${c.commits !== 1 ? "s" : ""}, ${c.authors} author${c.authors !== 1 ? "s" : ""}`).join("\n") : "(no changes in the last 7 days)"}` : ""}
 `;
   const existingContent = readFileSync3(outputPath, "utf-8");
   writeFileSync3(outputPath, existingContent + metadataSection);
@@ -447,15 +804,20 @@ ${importers.map((i) => `  \u2190 ${i}`).join("\n")}`).join("\n\n")}
       fileIndex,
       importGraph,
       exportGraph,
-      symbolIndex
+      symbolIndex,
+      complexityScores,
+      testFileMap,
+      recentChanges
     }
   };
 }
 
 // src/core/engine.ts
+init_esm_shims();
 import { readFileSync as readFileSync4 } from "fs";
 
 // src/core/prompts.ts
+init_esm_shims();
 var NUCLEUS_COMMANDS = `
 COMMANDS (output ONE per turn):
 (grep "pattern")           - Find lines matching regex
@@ -952,7 +1314,11 @@ function searchDocument(documentPath, pattern, options = {}) {
   return matches;
 }
 
+// src/providers/index.ts
+init_esm_shims();
+
 // src/providers/openai-compatible.ts
+init_esm_shims();
 var OpenAICompatibleProvider = class {
   name;
   config;
@@ -1036,6 +1402,7 @@ function createDeepSeekProvider(config2) {
 }
 
 // src/providers/ollama.ts
+init_esm_shims();
 var OllamaProvider = class {
   name = "Ollama";
   config;
@@ -1114,6 +1481,7 @@ function createOllamaProvider(config2) {
 }
 
 // src/providers/anthropic.ts
+init_esm_shims();
 var AnthropicProvider = class {
   name = "Anthropic";
   config;
@@ -1209,7 +1577,7 @@ function createProviderByType(type, config2) {
 }
 
 // src/mcp.ts
-import { existsSync as existsSync4, statSync as statSync2, mkdtempSync, unlinkSync, readFileSync as readFileSync5 } from "fs";
+import { existsSync as existsSync5, statSync as statSync2, mkdtempSync, unlinkSync, readFileSync as readFileSync6 } from "fs";
 import { tmpdir } from "os";
 import { join as join4, resolve } from "path";
 var DEFAULT_FIND_FILES_LIMIT = 100;
@@ -1218,6 +1586,24 @@ var DEFAULT_SEARCH_RESULTS = 50;
 var MAX_SEARCH_RESULTS = 200;
 var MAX_PATTERN_LENGTH = 500;
 var MAX_WILDCARDS = 20;
+var WORKER_URL = process.env.ARGUS_WORKER_URL || "http://localhost:37778";
+var workerAvailable = false;
+async function checkWorkerHealth() {
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 1e3);
+    const response = await fetch(`${WORKER_URL}/health`, {
+      signal: controller.signal
+    });
+    clearTimeout(timeout);
+    return response.ok;
+  } catch {
+    return false;
+  }
+}
+checkWorkerHealth().then((available) => {
+  workerAvailable = available;
+});
 var TOOLS = [
   {
     name: "__ARGUS_GUIDE",
@@ -1520,6 +1906,38 @@ Run this when:
       },
       required: ["path"]
     }
+  },
+  {
+    name: "semantic_search",
+    description: `Search code using natural language. Uses FTS5 full-text search.
+
+More flexible than regex search - finds related concepts and partial matches.
+
+Examples:
+- "authentication middleware"
+- "database connection"
+- "error handling"
+
+Returns symbols (functions, classes, types) with snippets of their content.
+Requires an index - will auto-create from snapshot on first use.`,
+    inputSchema: {
+      type: "object",
+      properties: {
+        path: {
+          type: "string",
+          description: "Path to the project directory (must have .argus/snapshot.txt)"
+        },
+        query: {
+          type: "string",
+          description: "Natural language query or code terms"
+        },
+        limit: {
+          type: "number",
+          description: "Maximum results (default: 20)"
+        }
+      },
+      required: ["path", "query"]
+    }
   }
 ];
 var config;
@@ -1577,6 +1995,26 @@ function parseSnapshotMetadata(content) {
   }
   return { importGraph, exportGraph, symbolIndex, exports };
 }
+async function searchWithWorker(snapshotPath, pattern, options) {
+  if (!workerAvailable) return null;
+  try {
+    await fetch(`${WORKER_URL}/snapshot/load`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ path: snapshotPath })
+    });
+    const response = await fetch(`${WORKER_URL}/search`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ path: snapshotPath, pattern, options })
+    });
+    if (response.ok) {
+      return await response.json();
+    }
+  } catch {
+  }
+  return null;
+}
 async function handleToolCall(name, args) {
   switch (name) {
     case "find_files": {
@@ -1594,10 +2032,10 @@ async function handleToolCall(name, args) {
       if (starCount > MAX_WILDCARDS) {
         throw new Error(`Too many wildcards in pattern (max ${MAX_WILDCARDS})`);
       }
-      if (!existsSync4(snapshotPath)) {
+      if (!existsSync5(snapshotPath)) {
         throw new Error(`Snapshot not found: ${snapshotPath}. Run 'argus snapshot' to create one.`);
       }
-      const content = readFileSync5(snapshotPath, "utf-8");
+      const content = readFileSync6(snapshotPath, "utf-8");
       const fileRegex = /^FILE: \.\/(.+)$/gm;
       const files = [];
       let match;
@@ -1620,10 +2058,10 @@ async function handleToolCall(name, args) {
     case "find_importers": {
       const path = resolve(args.path);
       const target = args.target;
-      if (!existsSync4(path)) {
+      if (!existsSync5(path)) {
         throw new Error(`File not found: ${path}`);
       }
-      const content = readFileSync5(path, "utf-8");
+      const content = readFileSync6(path, "utf-8");
       const metadata = parseSnapshotMetadata(content);
       if (!metadata) {
         throw new Error("This snapshot does not have metadata. Create with: argus snapshot --enhanced");
@@ -1654,10 +2092,10 @@ async function handleToolCall(name, args) {
     case "find_symbol": {
       const path = resolve(args.path);
       const symbol = args.symbol;
-      if (!existsSync4(path)) {
+      if (!existsSync5(path)) {
         throw new Error(`File not found: ${path}`);
       }
-      const content = readFileSync5(path, "utf-8");
+      const content = readFileSync6(path, "utf-8");
       const metadata = parseSnapshotMetadata(content);
       if (!metadata) {
         throw new Error("This snapshot does not have metadata. Create with: argus snapshot --enhanced");
@@ -1674,10 +2112,10 @@ async function handleToolCall(name, args) {
     case "get_file_deps": {
       const path = resolve(args.path);
       const file = args.file;
-      if (!existsSync4(path)) {
+      if (!existsSync5(path)) {
         throw new Error(`File not found: ${path}`);
       }
-      const content = readFileSync5(path, "utf-8");
+      const content = readFileSync6(path, "utf-8");
       const metadata = parseSnapshotMetadata(content);
       if (!metadata) {
         throw new Error("This snapshot does not have metadata. Create with: argus snapshot --enhanced");
@@ -1704,7 +2142,7 @@ async function handleToolCall(name, args) {
       const path = resolve(args.path);
       const query = args.query;
       const maxTurns = args.maxTurns || 15;
-      if (!existsSync4(path)) {
+      if (!existsSync5(path)) {
         throw new Error(`Path not found: ${path}`);
       }
       let snapshotPath = path;
@@ -1728,7 +2166,7 @@ async function handleToolCall(name, args) {
           commands: result.commands
         };
       } finally {
-        if (tempSnapshot && existsSync4(snapshotPath)) {
+        if (tempSnapshot && existsSync5(snapshotPath)) {
           unlinkSync(snapshotPath);
         }
       }
@@ -1749,10 +2187,57 @@ async function handleToolCall(name, args) {
       if (contextChars < 0) {
         throw new Error("contextChars must be non-negative");
       }
-      if (!existsSync4(path)) {
+      if (!existsSync5(path)) {
         throw new Error(`Snapshot not found: ${path}. Run 'argus snapshot' to create one.`);
       }
       const fetchLimit = offset + maxResults + 1;
+      if (workerAvailable) {
+        const workerResult = await searchWithWorker(path, pattern, {
+          caseInsensitive,
+          maxResults: fetchLimit,
+          offset: 0
+        });
+        if (workerResult) {
+          const hasMore2 = workerResult.matches.length === fetchLimit;
+          const pageMatches2 = workerResult.matches.slice(offset, offset + maxResults);
+          const formattedMatches2 = pageMatches2.map((m) => {
+            let displayLine = m.line;
+            if (contextChars > 0 && displayLine.length > contextChars) {
+              const matchStart = displayLine.indexOf(m.match);
+              if (matchStart !== -1) {
+                const matchEnd = matchStart + m.match.length;
+                const matchCenter = Math.floor((matchStart + matchEnd) / 2);
+                const halfContext = Math.floor(contextChars / 2);
+                let start = Math.max(0, matchCenter - halfContext);
+                let end = start + contextChars;
+                if (end > displayLine.length) {
+                  end = displayLine.length;
+                  start = Math.max(0, end - contextChars);
+                }
+                const prefix = start > 0 ? "..." : "";
+                const suffix = end < displayLine.length ? "..." : "";
+                displayLine = prefix + displayLine.slice(start, end) + suffix;
+              }
+            }
+            return { lineNum: m.lineNum, line: displayLine, match: m.match };
+          });
+          const response2 = {
+            count: formattedMatches2.length,
+            matches: formattedMatches2,
+            _source: "worker"
+            // Debug: show source
+          };
+          if (offset > 0 || hasMore2) {
+            response2.offset = offset;
+            response2.hasMore = hasMore2;
+            response2.totalFound = hasMore2 ? `${offset + maxResults}+` : String(offset + formattedMatches2.length);
+            if (hasMore2) {
+              response2.nextOffset = offset + maxResults;
+            }
+          }
+          return response2;
+        }
+      }
       const allMatches = searchDocument(path, pattern, {
         caseInsensitive,
         maxResults: fetchLimit
@@ -1798,11 +2283,47 @@ async function handleToolCall(name, args) {
       }
       return response;
     }
+    case "semantic_search": {
+      const projectPath = resolve(args.path);
+      const query = args.query;
+      const limit = args.limit || 20;
+      if (!query || query.trim() === "") {
+        throw new Error("Query cannot be empty");
+      }
+      const snapshotPath = join4(projectPath, ".argus", "snapshot.txt");
+      const indexPath = join4(projectPath, ".argus", "search.db");
+      if (!existsSync5(snapshotPath)) {
+        throw new Error(`Snapshot not found: ${snapshotPath}. Run 'argus snapshot' first.`);
+      }
+      const { SemanticIndex: SemanticIndex2 } = await Promise.resolve().then(() => (init_semantic_search(), semantic_search_exports));
+      const index = new SemanticIndex2(indexPath);
+      try {
+        const stats = index.getStats();
+        const snapshotMtime = statSync2(snapshotPath).mtimeMs;
+        const needsReindex = !stats.lastIndexed || new Date(stats.lastIndexed).getTime() < snapshotMtime || stats.snapshotPath !== snapshotPath;
+        if (needsReindex) {
+          index.indexFromSnapshot(snapshotPath);
+        }
+        const results = index.search(query, limit);
+        return {
+          query,
+          count: results.length,
+          results: results.map((r) => ({
+            file: r.file,
+            symbol: r.symbol,
+            type: r.type,
+            snippet: r.content.split("\n").slice(0, 5).join("\n")
+          }))
+        };
+      } finally {
+        index.close();
+      }
+    }
     case "create_snapshot": {
       const path = resolve(args.path);
       const outputPath = args.outputPath ? resolve(args.outputPath) : join4(tmpdir(), `argus-snapshot-${Date.now()}.txt`);
       const extensions = args.extensions || config.defaults.snapshotExtensions;
-      if (!existsSync4(path)) {
+      if (!existsSync5(path)) {
         throw new Error(`Path not found: ${path}`);
       }
       const result = createEnhancedSnapshot(path, outputPath, {
@@ -1835,10 +2356,10 @@ async function handleToolCall(name, args) {
       const targetLine = args.line;
       const beforeLines = args.before || 10;
       const afterLines = args.after || 10;
-      if (!existsSync4(snapshotPath)) {
+      if (!existsSync5(snapshotPath)) {
         throw new Error(`Snapshot not found: ${snapshotPath}`);
       }
-      const content = readFileSync5(snapshotPath, "utf-8");
+      const content = readFileSync6(snapshotPath, "utf-8");
       const normalizedTarget = targetFile.replace(/^\.\//, "");
       const fileMarkerVariants = [
         `FILE: ./${normalizedTarget}`,

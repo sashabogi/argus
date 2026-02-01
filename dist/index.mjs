@@ -1023,8 +1023,259 @@ function getProviderDisplayName(type) {
 function listProviderTypes() {
   return ["zai", "anthropic", "openai", "deepseek", "ollama"];
 }
+
+// src/worker/server.ts
+import express from "express";
+
+// src/worker/cache.ts
+import { readFileSync as readFileSync4, statSync as statSync2 } from "fs";
+var SnapshotCache = class {
+  cache = /* @__PURE__ */ new Map();
+  accessOrder = [];
+  maxSize;
+  constructor(options) {
+    this.maxSize = options.maxSize;
+  }
+  get size() {
+    return this.cache.size;
+  }
+  async load(path) {
+    const stats = statSync2(path);
+    const cached = this.cache.get(path);
+    if (cached && cached.mtime === stats.mtimeMs) {
+      this.touchAccess(path);
+      return cached;
+    }
+    const content = readFileSync4(path, "utf-8");
+    const lines = content.split("\n");
+    const fileIndex = this.buildFileIndex(lines);
+    const fileCount = (content.match(/^FILE: /gm) || []).length;
+    const snapshot = {
+      path,
+      content,
+      lines,
+      fileIndex,
+      loadedAt: /* @__PURE__ */ new Date(),
+      fileCount,
+      mtime: stats.mtimeMs
+    };
+    if (this.cache.size >= this.maxSize) {
+      const oldest = this.accessOrder.shift();
+      this.cache.delete(oldest);
+    }
+    this.cache.set(path, snapshot);
+    this.accessOrder.push(path);
+    return snapshot;
+  }
+  invalidate(path) {
+    this.cache.delete(path);
+    this.accessOrder = this.accessOrder.filter((p) => p !== path);
+  }
+  search(path, pattern, options = {}) {
+    const snapshot = this.cache.get(path);
+    if (!snapshot) {
+      throw new Error("Snapshot not loaded. Call /snapshot/load first.");
+    }
+    const flags = options.caseInsensitive ? "gi" : "g";
+    const regex = new RegExp(pattern, flags);
+    const matches = [];
+    const maxResults = options.maxResults || 50;
+    const offset = options.offset || 0;
+    let found = 0;
+    for (let i = 0; i < snapshot.lines.length; i++) {
+      const line = snapshot.lines[i];
+      const match = regex.exec(line);
+      regex.lastIndex = 0;
+      if (match) {
+        if (found >= offset && matches.length < maxResults) {
+          matches.push({
+            lineNum: i + 1,
+            line: line.trim(),
+            match: match[0]
+          });
+        }
+        found++;
+        if (matches.length >= maxResults) break;
+      }
+    }
+    return { matches, count: matches.length };
+  }
+  getContext(path, file, line, before = 10, after = 10) {
+    const snapshot = this.cache.get(path);
+    if (!snapshot) throw new Error("Snapshot not loaded");
+    const normalizedFile = file.replace(/^\.\//, "");
+    const fileRange = snapshot.fileIndex.get(normalizedFile);
+    if (!fileRange) throw new Error(`File not found: ${file}`);
+    const fileLines = snapshot.lines.slice(fileRange.start, fileRange.end);
+    const startLine = Math.max(0, line - before - 1);
+    const endLine = Math.min(fileLines.length, line + after);
+    const contextLines = fileLines.slice(startLine, endLine).map((l, idx) => {
+      const lineNum = startLine + idx + 1;
+      const marker = lineNum === line ? ">>>" : "   ";
+      return `${marker} ${lineNum.toString().padStart(4)}: ${l}`;
+    });
+    return {
+      content: contextLines.join("\n"),
+      range: { start: startLine + 1, end: endLine }
+    };
+  }
+  buildFileIndex(lines) {
+    const index = /* @__PURE__ */ new Map();
+    let currentFile = null;
+    let currentStart = 0;
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      if (line.startsWith("FILE: ./")) {
+        if (currentFile) {
+          index.set(currentFile, { start: currentStart, end: i - 1 });
+        }
+        currentFile = line.slice(8);
+        currentStart = i + 2;
+      }
+      if (line.startsWith("METADATA:") && currentFile) {
+        index.set(currentFile, { start: currentStart, end: i - 1 });
+        break;
+      }
+    }
+    if (currentFile && !index.has(currentFile)) {
+      index.set(currentFile, { start: currentStart, end: lines.length - 1 });
+    }
+    return index;
+  }
+  touchAccess(path) {
+    this.accessOrder = this.accessOrder.filter((p) => p !== path);
+    this.accessOrder.push(path);
+  }
+};
+
+// src/worker/watcher.ts
+import { watch } from "fs";
+var ProjectWatcher = class {
+  constructor(projectPath, snapshotPath, onUpdate, debounceMs = 1e3) {
+    this.projectPath = projectPath;
+    this.snapshotPath = snapshotPath;
+    this.onUpdate = onUpdate;
+    this.debounceMs = debounceMs;
+    this.start();
+  }
+  watcher = null;
+  debounceTimer = null;
+  changedFiles = /* @__PURE__ */ new Set();
+  start() {
+    try {
+      this.watcher = watch(this.projectPath, { recursive: true }, (eventType, filename) => {
+        if (!filename) return;
+        if (filename.includes("node_modules") || filename.includes(".git") || filename.includes(".argus")) {
+          return;
+        }
+        this.changedFiles.add(filename);
+        this.scheduleUpdate();
+      });
+    } catch (error) {
+      console.error(`Failed to watch ${this.projectPath}:`, error);
+    }
+  }
+  scheduleUpdate() {
+    if (this.debounceTimer) {
+      clearTimeout(this.debounceTimer);
+    }
+    this.debounceTimer = setTimeout(() => {
+      const files = Array.from(this.changedFiles);
+      this.changedFiles.clear();
+      this.onUpdate(files);
+    }, this.debounceMs);
+  }
+  close() {
+    if (this.watcher) {
+      this.watcher.close();
+      this.watcher = null;
+    }
+    if (this.debounceTimer) {
+      clearTimeout(this.debounceTimer);
+    }
+  }
+};
+
+// src/worker/server.ts
+var PORT = process.env.ARGUS_WORKER_PORT || 37778;
+function startWorker() {
+  const app = express();
+  const cache = new SnapshotCache({ maxSize: 5 });
+  const watchers = /* @__PURE__ */ new Map();
+  app.use(express.json());
+  app.get("/health", (_req, res) => {
+    res.json({
+      status: "ok",
+      version: "2.0.0",
+      cached: cache.size,
+      watching: watchers.size
+    });
+  });
+  app.post("/snapshot/load", async (req, res) => {
+    const { path } = req.body;
+    try {
+      const snapshot = await cache.load(path);
+      res.json({
+        success: true,
+        fileCount: snapshot.fileCount,
+        cached: true
+      });
+    } catch (error) {
+      res.status(400).json({ error: error.message });
+    }
+  });
+  app.post("/search", (req, res) => {
+    const { path, pattern, options } = req.body;
+    try {
+      const results = cache.search(path, pattern, options || {});
+      res.json(results);
+    } catch (error) {
+      res.status(400).json({ error: error.message });
+    }
+  });
+  app.post("/context", (req, res) => {
+    const { path, file, line, before, after } = req.body;
+    try {
+      const context = cache.getContext(path, file, line, before || 10, after || 10);
+      res.json(context);
+    } catch (error) {
+      res.status(400).json({ error: error.message });
+    }
+  });
+  app.post("/notify-change", (req, res) => {
+    const { projectPath } = req.body;
+    const snapshotPath = `${projectPath}/.argus/snapshot.txt`;
+    cache.invalidate(snapshotPath);
+    res.json({ invalidated: true });
+  });
+  app.post("/watch", (req, res) => {
+    const { projectPath, snapshotPath } = req.body;
+    if (!watchers.has(projectPath)) {
+      const watcher = new ProjectWatcher(projectPath, snapshotPath, () => {
+        cache.invalidate(snapshotPath);
+      });
+      watchers.set(projectPath, watcher);
+    }
+    res.json({ watching: true, path: projectPath });
+  });
+  app.delete("/watch", (req, res) => {
+    const { projectPath } = req.body;
+    const watcher = watchers.get(projectPath);
+    if (watcher) {
+      watcher.close();
+      watchers.delete(projectPath);
+    }
+    res.json({ watching: false });
+  });
+  const server = app.listen(PORT, () => {
+    console.log(`Argus worker listening on port ${PORT}`);
+  });
+  return { app, server, cache, watchers };
+}
 export {
   PROVIDER_DEFAULTS,
+  ProjectWatcher,
+  SnapshotCache,
   analyze,
   createAnthropicProvider,
   createDeepSeekProvider,
@@ -1043,6 +1294,7 @@ export {
   loadConfig,
   saveConfig,
   searchDocument,
+  startWorker,
   validateConfig
 };
 //# sourceMappingURL=index.mjs.map

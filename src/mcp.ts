@@ -23,6 +23,32 @@ const MAX_SEARCH_RESULTS = 200;
 const MAX_PATTERN_LENGTH = 500;
 const MAX_WILDCARDS = 20;
 
+// Worker service integration
+const WORKER_URL = process.env.ARGUS_WORKER_URL || 'http://localhost:37778';
+let workerAvailable = false;
+
+// Check worker availability on startup (non-blocking)
+async function checkWorkerHealth(): Promise<boolean> {
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 1000);
+
+    const response = await fetch(`${WORKER_URL}/health`, {
+      signal: controller.signal,
+    });
+    clearTimeout(timeout);
+
+    return response.ok;
+  } catch {
+    return false;
+  }
+}
+
+// Initialize worker check
+checkWorkerHealth().then(available => {
+  workerAvailable = available;
+});
+
 // MCP Protocol types
 interface MCPRequest {
   jsonrpc: '2.0';
@@ -346,6 +372,38 @@ Run this when:
       required: ['path'],
     },
   },
+  {
+    name: 'semantic_search',
+    description: `Search code using natural language. Uses FTS5 full-text search.
+
+More flexible than regex search - finds related concepts and partial matches.
+
+Examples:
+- "authentication middleware"
+- "database connection"
+- "error handling"
+
+Returns symbols (functions, classes, types) with snippets of their content.
+Requires an index - will auto-create from snapshot on first use.`,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        path: {
+          type: 'string',
+          description: 'Path to the project directory (must have .argus/snapshot.txt)',
+        },
+        query: {
+          type: 'string',
+          description: 'Natural language query or code terms',
+        },
+        limit: {
+          type: 'number',
+          description: 'Maximum results (default: 20)',
+        },
+      },
+      required: ['path', 'query'],
+    },
+  },
 ];
 
 // State - wrapped in try-catch to prevent any startup output
@@ -424,6 +482,39 @@ function parseSnapshotMetadata(content: string): {
   }
   
   return { importGraph, exportGraph, symbolIndex, exports };
+}
+
+// Try to use worker for search, fallback to direct file access
+async function searchWithWorker(
+  snapshotPath: string,
+  pattern: string,
+  options: { caseInsensitive?: boolean; maxResults?: number; offset?: number }
+): Promise<{ matches: Array<{ lineNum: number; line: string; match: string }>; count: number } | null> {
+  if (!workerAvailable) return null;
+
+  try {
+    // Ensure snapshot is loaded in worker cache
+    await fetch(`${WORKER_URL}/snapshot/load`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ path: snapshotPath }),
+    });
+
+    // Perform search via worker
+    const response = await fetch(`${WORKER_URL}/search`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ path: snapshotPath, pattern, options }),
+    });
+
+    if (response.ok) {
+      return await response.json();
+    }
+  } catch {
+    // Worker failed, will fallback to direct access
+  }
+
+  return null;
 }
 
 // Handle tool calls
@@ -669,6 +760,68 @@ async function handleToolCall(name: string, args: Record<string, unknown>): Prom
 
       // Fetch one extra to detect hasMore
       const fetchLimit = offset + maxResults + 1;
+
+      // Try worker first for cached search (faster for repeated queries)
+      if (workerAvailable) {
+        const workerResult = await searchWithWorker(path, pattern, {
+          caseInsensitive,
+          maxResults: fetchLimit,
+          offset: 0,
+        });
+
+        if (workerResult) {
+          // Worker returned results, process them
+          const hasMore = workerResult.matches.length === fetchLimit;
+          const pageMatches = workerResult.matches.slice(offset, offset + maxResults);
+
+          // Apply contextChars truncation if needed
+          const formattedMatches = pageMatches.map(m => {
+            let displayLine = m.line;
+
+            if (contextChars > 0 && displayLine.length > contextChars) {
+              const matchStart = displayLine.indexOf(m.match);
+              if (matchStart !== -1) {
+                const matchEnd = matchStart + m.match.length;
+                const matchCenter = Math.floor((matchStart + matchEnd) / 2);
+                const halfContext = Math.floor(contextChars / 2);
+
+                let start = Math.max(0, matchCenter - halfContext);
+                let end = start + contextChars;
+
+                if (end > displayLine.length) {
+                  end = displayLine.length;
+                  start = Math.max(0, end - contextChars);
+                }
+
+                const prefix = start > 0 ? '...' : '';
+                const suffix = end < displayLine.length ? '...' : '';
+                displayLine = prefix + displayLine.slice(start, end) + suffix;
+              }
+            }
+
+            return { lineNum: m.lineNum, line: displayLine, match: m.match };
+          });
+
+          const response: Record<string, unknown> = {
+            count: formattedMatches.length,
+            matches: formattedMatches,
+            _source: 'worker',  // Debug: show source
+          };
+
+          if (offset > 0 || hasMore) {
+            response.offset = offset;
+            response.hasMore = hasMore;
+            response.totalFound = hasMore ? `${offset + maxResults}+` : String(offset + formattedMatches.length);
+            if (hasMore) {
+              response.nextOffset = offset + maxResults;
+            }
+          }
+
+          return response;
+        }
+      }
+
+      // Fallback to direct file search
       const allMatches = searchDocument(path, pattern, {
         caseInsensitive,
         maxResults: fetchLimit
@@ -728,9 +881,59 @@ async function handleToolCall(name: string, args: Record<string, unknown>): Prom
       return response;
     }
     
+    case 'semantic_search': {
+      const projectPath = resolve(args.path as string);
+      const query = args.query as string;
+      const limit = (args.limit as number) || 20;
+
+      if (!query || query.trim() === '') {
+        throw new Error('Query cannot be empty');
+      }
+
+      const snapshotPath = join(projectPath, '.argus', 'snapshot.txt');
+      const indexPath = join(projectPath, '.argus', 'search.db');
+
+      if (!existsSync(snapshotPath)) {
+        throw new Error(`Snapshot not found: ${snapshotPath}. Run 'argus snapshot' first.`);
+      }
+
+      // Import SemanticIndex dynamically to avoid startup cost
+      const { SemanticIndex } = await import('./core/semantic-search.js');
+      const index = new SemanticIndex(indexPath);
+
+      try {
+        // Check if index needs rebuilding
+        const stats = index.getStats();
+        const snapshotMtime = statSync(snapshotPath).mtimeMs;
+        const needsReindex = !stats.lastIndexed ||
+          new Date(stats.lastIndexed).getTime() < snapshotMtime ||
+          stats.snapshotPath !== snapshotPath;
+
+        if (needsReindex) {
+          index.indexFromSnapshot(snapshotPath);
+          // Continue with search after reindexing
+        }
+
+        const results = index.search(query, limit);
+
+        return {
+          query,
+          count: results.length,
+          results: results.map(r => ({
+            file: r.file,
+            symbol: r.symbol,
+            type: r.type,
+            snippet: r.content.split('\n').slice(0, 5).join('\n'),
+          })),
+        };
+      } finally {
+        index.close();
+      }
+    }
+
     case 'create_snapshot': {
       const path = resolve(args.path as string);
-      const outputPath = args.outputPath 
+      const outputPath = args.outputPath
         ? resolve(args.outputPath as string)
         : join(tmpdir(), `argus-snapshot-${Date.now()}.txt`);
       const extensions = args.extensions as string[] || config.defaults.snapshotExtensions;
