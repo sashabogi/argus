@@ -1212,6 +1212,12 @@ function createProviderByType(type, config2) {
 import { existsSync as existsSync4, statSync as statSync2, mkdtempSync, unlinkSync, readFileSync as readFileSync5 } from "fs";
 import { tmpdir } from "os";
 import { join as join4, resolve } from "path";
+var DEFAULT_FIND_FILES_LIMIT = 100;
+var MAX_FIND_FILES_LIMIT = 500;
+var DEFAULT_SEARCH_RESULTS = 50;
+var MAX_SEARCH_RESULTS = 200;
+var MAX_PATTERN_LENGTH = 500;
+var MAX_WILDCARDS = 20;
 var TOOLS = [
   {
     name: "__ARGUS_GUIDE",
@@ -1289,6 +1295,44 @@ Returns the surrounding code with proper line numbers.`,
         }
       },
       required: ["path", "file", "line"]
+    }
+  },
+  {
+    name: "find_files",
+    description: `Find files matching a glob pattern. Ultra-low cost (~10 tokens per result).
+
+Use for:
+- "What files are in src/components?"
+- "Find all test files"
+- "List files named auth*"
+
+Patterns:
+- * matches any characters except /
+- ** matches any characters including /
+- ? matches single character
+
+Returns file paths only - use get_context or search_codebase for content.`,
+    inputSchema: {
+      type: "object",
+      properties: {
+        path: {
+          type: "string",
+          description: "Path to the snapshot file (.argus/snapshot.txt)"
+        },
+        pattern: {
+          type: "string",
+          description: 'Glob pattern (e.g., "*.test.ts", "src/**/*.tsx", "**/*auth*")'
+        },
+        caseInsensitive: {
+          type: "boolean",
+          description: "Case-insensitive matching (default: true)"
+        },
+        limit: {
+          type: "number",
+          description: "Maximum results (default: 100, max: 500)"
+        }
+      },
+      required: ["path", "pattern"]
     }
   },
   {
@@ -1427,11 +1471,19 @@ Returns matching lines with line numbers - much faster than grep across many fil
         },
         caseInsensitive: {
           type: "boolean",
-          description: "Whether to ignore case (default: false)"
+          description: "Whether to ignore case (default: true)"
         },
         maxResults: {
           type: "number",
           description: "Maximum results to return (default: 50)"
+        },
+        offset: {
+          type: "number",
+          description: "Skip first N results for pagination (default: 0)"
+        },
+        contextChars: {
+          type: "number",
+          description: "Characters of context around match (default: 0 = full line)"
         }
       },
       required: ["path", "pattern"]
@@ -1527,6 +1579,44 @@ function parseSnapshotMetadata(content) {
 }
 async function handleToolCall(name, args) {
   switch (name) {
+    case "find_files": {
+      const snapshotPath = resolve(args.path);
+      const pattern = args.pattern;
+      const caseInsensitive = args.caseInsensitive !== false;
+      const limit = Math.min(args.limit || DEFAULT_FIND_FILES_LIMIT, MAX_FIND_FILES_LIMIT);
+      if (!pattern || pattern.trim() === "") {
+        throw new Error("Pattern cannot be empty");
+      }
+      if (pattern.length > MAX_PATTERN_LENGTH) {
+        throw new Error(`Pattern too long (max ${MAX_PATTERN_LENGTH} characters)`);
+      }
+      const starCount = (pattern.match(/\*/g) || []).length;
+      if (starCount > MAX_WILDCARDS) {
+        throw new Error(`Too many wildcards in pattern (max ${MAX_WILDCARDS})`);
+      }
+      if (!existsSync4(snapshotPath)) {
+        throw new Error(`Snapshot not found: ${snapshotPath}. Run 'argus snapshot' to create one.`);
+      }
+      const content = readFileSync5(snapshotPath, "utf-8");
+      const fileRegex = /^FILE: \.\/(.+)$/gm;
+      const files = [];
+      let match;
+      while ((match = fileRegex.exec(content)) !== null) {
+        files.push(match[1]);
+      }
+      let regexPattern = pattern.replace(/[.+^${}()|[\]\\-]/g, "\\$&").replace(/\*\*/g, "<<<GLOBSTAR>>>").replace(/\*/g, "[^/]*?").replace(/<<<GLOBSTAR>>>/g, ".*?").replace(/\?/g, ".");
+      const flags = caseInsensitive ? "i" : "";
+      const regex = new RegExp(`^${regexPattern}$`, flags);
+      const matching = files.filter((f) => regex.test(f));
+      const limited = matching.slice(0, limit).sort();
+      return {
+        pattern,
+        files: limited,
+        count: limited.length,
+        totalMatching: matching.length,
+        hasMore: matching.length > limit
+      };
+    }
     case "find_importers": {
       const path = resolve(args.path);
       const target = args.target;
@@ -1646,20 +1736,67 @@ async function handleToolCall(name, args) {
     case "search_codebase": {
       const path = resolve(args.path);
       const pattern = args.pattern;
-      const caseInsensitive = args.caseInsensitive || false;
-      const maxResults = args.maxResults || 50;
-      if (!existsSync4(path)) {
-        throw new Error(`File not found: ${path}`);
+      const caseInsensitive = args.caseInsensitive !== false;
+      const maxResults = Math.min(args.maxResults || DEFAULT_SEARCH_RESULTS, MAX_SEARCH_RESULTS);
+      const offset = args.offset || 0;
+      const contextChars = args.contextChars || 0;
+      if (!pattern || pattern.trim() === "") {
+        throw new Error("Pattern cannot be empty");
       }
-      const matches = searchDocument(path, pattern, { caseInsensitive, maxResults });
-      return {
-        count: matches.length,
-        matches: matches.map((m) => ({
+      if (offset < 0 || !Number.isInteger(offset)) {
+        throw new Error("Offset must be a non-negative integer");
+      }
+      if (contextChars < 0) {
+        throw new Error("contextChars must be non-negative");
+      }
+      if (!existsSync4(path)) {
+        throw new Error(`Snapshot not found: ${path}. Run 'argus snapshot' to create one.`);
+      }
+      const fetchLimit = offset + maxResults + 1;
+      const allMatches = searchDocument(path, pattern, {
+        caseInsensitive,
+        maxResults: fetchLimit
+      });
+      const hasMore = allMatches.length === fetchLimit;
+      const pageMatches = allMatches.slice(offset, offset + maxResults);
+      const formattedMatches = pageMatches.map((m) => {
+        let displayLine = m.line.trim();
+        if (contextChars > 0 && displayLine.length > contextChars) {
+          const matchStart = displayLine.indexOf(m.match);
+          if (matchStart !== -1) {
+            const matchEnd = matchStart + m.match.length;
+            const matchCenter = Math.floor((matchStart + matchEnd) / 2);
+            const halfContext = Math.floor(contextChars / 2);
+            let start = Math.max(0, matchCenter - halfContext);
+            let end = start + contextChars;
+            if (end > displayLine.length) {
+              end = displayLine.length;
+              start = Math.max(0, end - contextChars);
+            }
+            const prefix = start > 0 ? "..." : "";
+            const suffix = end < displayLine.length ? "..." : "";
+            displayLine = prefix + displayLine.slice(start, end) + suffix;
+          }
+        }
+        return {
           lineNum: m.lineNum,
-          line: m.line.trim(),
+          line: displayLine,
           match: m.match
-        }))
+        };
+      });
+      const response = {
+        count: formattedMatches.length,
+        matches: formattedMatches
       };
+      if (offset > 0 || hasMore) {
+        response.offset = offset;
+        response.hasMore = hasMore;
+        response.totalFound = hasMore ? `${offset + maxResults}+` : String(offset + formattedMatches.length);
+        if (hasMore) {
+          response.nextOffset = offset + maxResults;
+        }
+      }
+      return response;
     }
     case "create_snapshot": {
       const path = resolve(args.path);

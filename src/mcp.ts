@@ -15,6 +15,14 @@ import { existsSync, statSync, mkdtempSync, writeFileSync, unlinkSync, readFileS
 import { tmpdir } from 'os';
 import { join, resolve } from 'path';
 
+// Tool limits and defaults
+const DEFAULT_FIND_FILES_LIMIT = 100;
+const MAX_FIND_FILES_LIMIT = 500;
+const DEFAULT_SEARCH_RESULTS = 50;
+const MAX_SEARCH_RESULTS = 200;
+const MAX_PATTERN_LENGTH = 500;
+const MAX_WILDCARDS = 20;
+
 // MCP Protocol types
 interface MCPRequest {
   jsonrpc: '2.0';
@@ -112,6 +120,44 @@ Returns the surrounding code with proper line numbers.`,
         },
       },
       required: ['path', 'file', 'line'],
+    },
+  },
+  {
+    name: 'find_files',
+    description: `Find files matching a glob pattern. Ultra-low cost (~10 tokens per result).
+
+Use for:
+- "What files are in src/components?"
+- "Find all test files"
+- "List files named auth*"
+
+Patterns:
+- * matches any characters except /
+- ** matches any characters including /
+- ? matches single character
+
+Returns file paths only - use get_context or search_codebase for content.`,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        path: {
+          type: 'string',
+          description: 'Path to the snapshot file (.argus/snapshot.txt)',
+        },
+        pattern: {
+          type: 'string',
+          description: 'Glob pattern (e.g., "*.test.ts", "src/**/*.tsx", "**/*auth*")',
+        },
+        caseInsensitive: {
+          type: 'boolean',
+          description: 'Case-insensitive matching (default: true)',
+        },
+        limit: {
+          type: 'number',
+          description: 'Maximum results (default: 100, max: 500)',
+        },
+      },
+      required: ['path', 'pattern'],
     },
   },
   {
@@ -250,11 +296,19 @@ Returns matching lines with line numbers - much faster than grep across many fil
         },
         caseInsensitive: {
           type: 'boolean',
-          description: 'Whether to ignore case (default: false)',
+          description: 'Whether to ignore case (default: true)',
         },
         maxResults: {
           type: 'number',
           description: 'Maximum results to return (default: 50)',
+        },
+        offset: {
+          type: 'number',
+          description: 'Skip first N results for pagination (default: 0)',
+        },
+        contextChars: {
+          type: 'number',
+          description: 'Characters of context around match (default: 0 = full line)',
         },
       },
       required: ['path', 'pattern'],
@@ -375,6 +429,64 @@ function parseSnapshotMetadata(content: string): {
 // Handle tool calls
 async function handleToolCall(name: string, args: Record<string, unknown>): Promise<unknown> {
   switch (name) {
+    case 'find_files': {
+      const snapshotPath = resolve(args.path as string);
+      const pattern = args.pattern as string;
+      const caseInsensitive = args.caseInsensitive !== false; // default true
+      const limit = Math.min((args.limit as number) || DEFAULT_FIND_FILES_LIMIT, MAX_FIND_FILES_LIMIT);
+
+      // Input validation
+      if (!pattern || pattern.trim() === '') {
+        throw new Error('Pattern cannot be empty');
+      }
+
+      if (pattern.length > MAX_PATTERN_LENGTH) {
+        throw new Error(`Pattern too long (max ${MAX_PATTERN_LENGTH} characters)`);
+      }
+
+      // ReDoS protection - limit wildcards
+      const starCount = (pattern.match(/\*/g) || []).length;
+      if (starCount > MAX_WILDCARDS) {
+        throw new Error(`Too many wildcards in pattern (max ${MAX_WILDCARDS})`);
+      }
+
+      if (!existsSync(snapshotPath)) {
+        throw new Error(`Snapshot not found: ${snapshotPath}. Run 'argus snapshot' to create one.`);
+      }
+
+      const content = readFileSync(snapshotPath, 'utf-8');
+
+      // Extract all FILE: markers
+      const fileRegex = /^FILE: \.\/(.+)$/gm;
+      const files: string[] = [];
+      let match;
+      while ((match = fileRegex.exec(content)) !== null) {
+        files.push(match[1]);
+      }
+
+      // Convert glob pattern to regex with proper escaping
+      let regexPattern = pattern
+        .replace(/[.+^${}()|[\]\\-]/g, '\\$&')  // Escape all regex special chars
+        .replace(/\*\*/g, '<<<GLOBSTAR>>>')
+        .replace(/\*/g, '[^/]*?')               // Non-greedy
+        .replace(/<<<GLOBSTAR>>>/g, '.*?')      // Non-greedy
+        .replace(/\?/g, '.');
+
+      const flags = caseInsensitive ? 'i' : '';
+      const regex = new RegExp(`^${regexPattern}$`, flags);
+
+      const matching = files.filter(f => regex.test(f));
+      const limited = matching.slice(0, limit).sort();  // Sort only the limited set
+
+      return {
+        pattern,
+        files: limited,
+        count: limited.length,
+        totalMatching: matching.length,
+        hasMore: matching.length > limit,
+      };
+    }
+
     case 'find_importers': {
       const path = resolve(args.path as string);
       const target = args.target as string;
@@ -533,23 +645,87 @@ async function handleToolCall(name: string, args: Record<string, unknown>): Prom
     case 'search_codebase': {
       const path = resolve(args.path as string);
       const pattern = args.pattern as string;
-      const caseInsensitive = args.caseInsensitive as boolean || false;
-      const maxResults = (args.maxResults as number) || 50;
-      
-      if (!existsSync(path)) {
-        throw new Error(`File not found: ${path}`);
+      const caseInsensitive = args.caseInsensitive !== false; // default true (consistent with find_files)
+      const maxResults = Math.min((args.maxResults as number) || DEFAULT_SEARCH_RESULTS, MAX_SEARCH_RESULTS);
+      const offset = (args.offset as number) || 0;
+      const contextChars = (args.contextChars as number) || 0;
+
+      // Input validation
+      if (!pattern || pattern.trim() === '') {
+        throw new Error('Pattern cannot be empty');
       }
-      
-      const matches = searchDocument(path, pattern, { caseInsensitive, maxResults });
-      
-      return {
-        count: matches.length,
-        matches: matches.map(m => ({
+
+      if (offset < 0 || !Number.isInteger(offset)) {
+        throw new Error('Offset must be a non-negative integer');
+      }
+
+      if (contextChars < 0) {
+        throw new Error('contextChars must be non-negative');
+      }
+
+      if (!existsSync(path)) {
+        throw new Error(`Snapshot not found: ${path}. Run 'argus snapshot' to create one.`);
+      }
+
+      // Fetch one extra to detect hasMore
+      const fetchLimit = offset + maxResults + 1;
+      const allMatches = searchDocument(path, pattern, {
+        caseInsensitive,
+        maxResults: fetchLimit
+      });
+
+      const hasMore = allMatches.length === fetchLimit;
+      const pageMatches = allMatches.slice(offset, offset + maxResults);
+
+      // Format matches with optional match-centered truncation
+      const formattedMatches = pageMatches.map(m => {
+        let displayLine = m.line.trim();
+
+        if (contextChars > 0 && displayLine.length > contextChars) {
+          const matchStart = displayLine.indexOf(m.match);
+          if (matchStart !== -1) {
+            const matchEnd = matchStart + m.match.length;
+            const matchCenter = Math.floor((matchStart + matchEnd) / 2);
+            const halfContext = Math.floor(contextChars / 2);
+
+            let start = Math.max(0, matchCenter - halfContext);
+            let end = start + contextChars;
+
+            if (end > displayLine.length) {
+              end = displayLine.length;
+              start = Math.max(0, end - contextChars);
+            }
+
+            const prefix = start > 0 ? '...' : '';
+            const suffix = end < displayLine.length ? '...' : '';
+            displayLine = prefix + displayLine.slice(start, end) + suffix;
+          }
+        }
+
+        return {
           lineNum: m.lineNum,
-          line: m.line.trim(),
+          line: displayLine,
           match: m.match,
-        })),
+        };
+      });
+
+      // Build response - backwards compatible
+      const response: Record<string, unknown> = {
+        count: formattedMatches.length,
+        matches: formattedMatches,
       };
+
+      // Add pagination fields when relevant
+      if (offset > 0 || hasMore) {
+        response.offset = offset;
+        response.hasMore = hasMore;
+        response.totalFound = hasMore ? `${offset + maxResults}+` : String(offset + formattedMatches.length);
+        if (hasMore) {
+          response.nextOffset = offset + maxResults;
+        }
+      }
+
+      return response;
     }
     
     case 'create_snapshot': {
