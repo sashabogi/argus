@@ -52,3 +52,10 @@ export {
   type CompletionResult,
   type ProviderConfig as AIProviderConfig,
 } from './providers/index.js';
+
+// Worker exports
+export {
+  startWorker,
+  SnapshotCache,
+  ProjectWatcher,
+} from './worker/index.js';

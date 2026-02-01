@@ -1,6 +1,12 @@
 #!/usr/bin/env node
 var __defProp = Object.defineProperty;
 var __getOwnPropNames = Object.getOwnPropertyNames;
+var __require = /* @__PURE__ */ ((x) => typeof require !== "undefined" ? require : typeof Proxy !== "undefined" ? new Proxy(x, {
+  get: (a, b) => (typeof require !== "undefined" ? require : a)[b]
+}) : x)(function(x) {
+  if (typeof require !== "undefined") return require.apply(this, arguments);
+  throw Error('Dynamic require of "' + x + '" is not supported');
+});
 var __esm = (fn, res) => function __init() {
   return fn && (res = (0, fn[__getOwnPropNames(fn)[0]])(fn = 0)), res;
 };
@@ -10,9 +16,15 @@ var __export = (target, all) => {
 };
 
 // node_modules/tsup/assets/esm_shims.js
+import { fileURLToPath } from "url";
+import path from "path";
+var getFilename, getDirname, __dirname;
 var init_esm_shims = __esm({
   "node_modules/tsup/assets/esm_shims.js"() {
     "use strict";
+    getFilename = () => fileURLToPath(import.meta.url);
+    getDirname = () => path.dirname(getFilename());
+    __dirname = /* @__PURE__ */ getDirname();
   }
 });
 
@@ -511,14 +523,14 @@ var init_onboarding_ui = __esm({
 });
 
 // src/core/onboarding.ts
-function detectPotentialKeyFiles(projectPath, userPatterns, fs2, path2) {
+function detectPotentialKeyFiles(projectPath, userPatterns, fs2, path3) {
   const detected = [];
   function checkFile(filePath, relativePath) {
     try {
       const stats = fs2.statSync(filePath);
       if (!stats.isFile()) return;
-      const fileName = path2.basename(filePath).toLowerCase();
-      const ext = path2.extname(filePath).toLowerCase();
+      const fileName = path3.basename(filePath).toLowerCase();
+      const ext = path3.extname(filePath).toLowerCase();
       if (![".md", ".txt", ".org", ""].includes(ext)) return;
       let reason = "";
       let matchedPattern;
@@ -587,13 +599,13 @@ function detectPotentialKeyFiles(projectPath, userPatterns, fs2, path2) {
           }
           if (relativePath.split("/").filter(Boolean).length < 2) {
             scanDir(
-              path2.join(dirPath, entry.name),
+              path3.join(dirPath, entry.name),
               relativePath ? `${relativePath}/${entry.name}` : entry.name
             );
           }
         } else {
           checkFile(
-            path2.join(dirPath, entry.name),
+            path3.join(dirPath, entry.name),
             relativePath ? `${relativePath}/${entry.name}` : entry.name
           );
         }
@@ -624,12 +636,12 @@ async function runGlobalOnboarding() {
   console.log(`   Key patterns: ${config.globalKeyPatterns.join(", ")}`);
   return config;
 }
-async function runProjectOnboarding(projectPath, globalConfig, fs2, path2) {
-  const projectName = path2.basename(projectPath);
+async function runProjectOnboarding(projectPath, globalConfig, fs2, path3) {
+  const projectName = path3.basename(projectPath);
   console.log(`
 \u{1F4C2} Scanning project: ${projectName}
 `);
-  const detected = detectPotentialKeyFiles(projectPath, globalConfig.globalKeyPatterns, fs2, path2);
+  const detected = detectPotentialKeyFiles(projectPath, globalConfig.globalKeyPatterns, fs2, path3);
   if (globalConfig.experienceLevel === "beginner") {
     const autoSelected = detected.filter((d) => d.matchedPattern).map((d) => d.path);
     if (autoSelected.length > 0) {
@@ -703,9 +715,9 @@ import { Command } from "commander";
 import { existsSync as existsSync4, readFileSync as readFileSync5, writeFileSync as writeFileSync4, statSync as statSync2, unlinkSync, readdirSync as readdirSync2, mkdirSync as mkdirSync2 } from "fs";
 import * as fs from "fs";
 import { homedir as homedir2 } from "os";
-import { join as join4, resolve, basename } from "path";
-import * as path from "path";
-import { execSync } from "child_process";
+import { join as join4, resolve, basename as basename2 } from "path";
+import * as path2 from "path";
+import { execSync as execSync2 } from "child_process";
 
 // src/core/config.ts
 init_esm_shims();
@@ -945,7 +957,8 @@ function createSnapshot(projectPath, outputPath, options = {}) {
 // src/core/enhanced-snapshot.ts
 init_esm_shims();
 import { readFileSync as readFileSync3, writeFileSync as writeFileSync3 } from "fs";
-import { join as join3, dirname, extname as extname2 } from "path";
+import { join as join3, dirname, extname as extname2, basename } from "path";
+import { execSync } from "child_process";
 function parseImports(content, filePath) {
   const imports = [];
   const lines = content.split("\n");
@@ -1082,6 +1095,114 @@ function parseExports(content, filePath) {
   }
   return exports;
 }
+function calculateComplexity(content) {
+  const patterns = [
+    /\bif\s*\(/g,
+    /\belse\s+if\s*\(/g,
+    /\bwhile\s*\(/g,
+    /\bfor\s*\(/g,
+    /\bcase\s+/g,
+    /\?\s*.*\s*:/g,
+    /\&\&/g,
+    /\|\|/g,
+    /\bcatch\s*\(/g
+  ];
+  let complexity = 1;
+  for (const pattern of patterns) {
+    const matches = content.match(pattern);
+    if (matches) complexity += matches.length;
+  }
+  return complexity;
+}
+function getComplexityLevel(score) {
+  if (score <= 10) return "low";
+  if (score <= 20) return "medium";
+  return "high";
+}
+function mapTestFiles(files) {
+  const testMap = {};
+  const testPatterns = [
+    // Same directory patterns
+    (src) => src.replace(/\.tsx?$/, ".test.ts"),
+    (src) => src.replace(/\.tsx?$/, ".test.tsx"),
+    (src) => src.replace(/\.tsx?$/, ".spec.ts"),
+    (src) => src.replace(/\.tsx?$/, ".spec.tsx"),
+    (src) => src.replace(/\.jsx?$/, ".test.js"),
+    (src) => src.replace(/\.jsx?$/, ".test.jsx"),
+    (src) => src.replace(/\.jsx?$/, ".spec.js"),
+    (src) => src.replace(/\.jsx?$/, ".spec.jsx"),
+    // __tests__ directory pattern
+    (src) => {
+      const dir = dirname(src);
+      const base = basename(src).replace(/\.(tsx?|jsx?)$/, "");
+      return join3(dir, "__tests__", `${base}.test.ts`);
+    },
+    (src) => {
+      const dir = dirname(src);
+      const base = basename(src).replace(/\.(tsx?|jsx?)$/, "");
+      return join3(dir, "__tests__", `${base}.test.tsx`);
+    },
+    // test/ directory pattern
+    (src) => src.replace(/^src\//, "test/").replace(/\.(tsx?|jsx?)$/, ".test.ts"),
+    (src) => src.replace(/^src\//, "tests/").replace(/\.(tsx?|jsx?)$/, ".test.ts")
+  ];
+  const fileSet = new Set(files);
+  for (const file of files) {
+    if (file.includes(".test.") || file.includes(".spec.") || file.includes("__tests__")) continue;
+    if (!/\.(tsx?|jsx?)$/.test(file)) continue;
+    const tests = [];
+    for (const pattern of testPatterns) {
+      const testPath = pattern(file);
+      if (testPath !== file && fileSet.has(testPath)) {
+        tests.push(testPath);
+      }
+    }
+    if (tests.length > 0) {
+      testMap[file] = [...new Set(tests)];
+    }
+  }
+  return testMap;
+}
+function getRecentChanges(projectPath) {
+  try {
+    execSync("git rev-parse --git-dir", { cwd: projectPath, encoding: "utf-8", stdio: "pipe" });
+    const output = execSync(
+      'git log --since="7 days ago" --name-only --format="COMMIT_AUTHOR:%an" --diff-filter=ACMR',
+      { cwd: projectPath, encoding: "utf-8", maxBuffer: 10 * 1024 * 1024, stdio: "pipe" }
+    );
+    if (!output.trim()) return [];
+    const fileStats = {};
+    let currentAuthor = "";
+    let currentCommitId = 0;
+    for (const line of output.split("\n")) {
+      const trimmed = line.trim();
+      if (!trimmed) {
+        currentCommitId++;
+        continue;
+      }
+      if (trimmed.startsWith("COMMIT_AUTHOR:")) {
+        currentAuthor = trimmed.replace("COMMIT_AUTHOR:", "");
+        continue;
+      }
+      const file = trimmed;
+      if (!fileStats[file]) {
+        fileStats[file] = { commits: /* @__PURE__ */ new Set(), authors: /* @__PURE__ */ new Set() };
+      }
+      fileStats[file].commits.add(`${currentCommitId}`);
+      if (currentAuthor) {
+        fileStats[file].authors.add(currentAuthor);
+      }
+    }
+    const result = Object.entries(fileStats).map(([file, stats]) => ({
+      file,
+      commits: stats.commits.size,
+      authors: stats.authors.size
+    })).sort((a, b) => b.commits - a.commits);
+    return result;
+  } catch {
+    return null;
+  }
+}
 function resolveImportPath(importPath, fromFile, projectFiles) {
   if (!importPath.startsWith(".")) return void 0;
   const fromDir = dirname(fromFile);
@@ -1151,6 +1272,23 @@ function createEnhancedSnapshot(projectPath, outputPath, options = {}) {
       symbolIndex[exp.symbol].push(exp.file);
     }
   }
+  const complexityScores = [];
+  for (const [relPath, metadata] of Object.entries(fileIndex)) {
+    const fullPath = join3(projectPath, relPath);
+    try {
+      const content = readFileSync3(fullPath, "utf-8");
+      const score = calculateComplexity(content);
+      complexityScores.push({
+        file: relPath,
+        score,
+        level: getComplexityLevel(score)
+      });
+    } catch {
+    }
+  }
+  complexityScores.sort((a, b) => b.score - a.score);
+  const testFileMap = mapTestFiles(baseResult.files);
+  const recentChanges = getRecentChanges(projectPath);
   const metadataSection = `
 
 ================================================================================
@@ -1174,6 +1312,25 @@ METADATA: WHO IMPORTS WHOM
 ================================================================================
 ${Object.entries(exportGraph).map(([file, importers]) => `${file} is imported by:
 ${importers.map((i) => `  \u2190 ${i}`).join("\n")}`).join("\n\n")}
+
+================================================================================
+METADATA: COMPLEXITY SCORES
+================================================================================
+${complexityScores.map((c) => `${c.file}: ${c.score} (${c.level})`).join("\n")}
+
+================================================================================
+METADATA: TEST COVERAGE MAP
+================================================================================
+${Object.entries(testFileMap).length > 0 ? Object.entries(testFileMap).map(([src, tests]) => `${src} -> ${tests.join(", ")}`).join("\n") : "(no test file mappings found)"}
+${baseResult.files.filter(
+    (f) => /\.(tsx?|jsx?)$/.test(f) && !f.includes(".test.") && !f.includes(".spec.") && !f.includes("__tests__") && !testFileMap[f]
+  ).map((f) => `${f} -> (no tests)`).join("\n")}
+${recentChanges !== null ? `
+
+================================================================================
+METADATA: RECENT CHANGES (last 7 days)
+================================================================================
+${recentChanges.length > 0 ? recentChanges.map((c) => `${c.file}: ${c.commits} commit${c.commits !== 1 ? "s" : ""}, ${c.authors} author${c.authors !== 1 ? "s" : ""}`).join("\n") : "(no changes in the last 7 days)"}` : ""}
 `;
   const existingContent = readFileSync3(outputPath, "utf-8");
   writeFileSync3(outputPath, existingContent + metadataSection);
@@ -1185,7 +1342,10 @@ ${importers.map((i) => `  \u2190 ${i}`).join("\n")}`).join("\n\n")}
       fileIndex,
       importGraph,
       exportGraph,
-      symbolIndex
+      symbolIndex,
+      complexityScores,
+      testFileMap,
+      recentChanges
     }
   };
 }
@@ -2055,7 +2215,7 @@ program.command("init").description("Interactive setup wizard").action(async () 
 program.command("update").description("Update Argus to the latest version").action(() => {
   console.log("\n\u{1F504} Updating Argus...\n");
   try {
-    execSync("npm install -g https://github.com/sashabogi/argus/tarball/main", { stdio: "inherit" });
+    execSync2("npm install -g https://github.com/sashabogi/argus/tarball/main", { stdio: "inherit" });
     console.log("\n\u2705 Argus updated successfully!");
     console.log("\nRun `argus --version` to check the new version.");
   } catch (error) {
@@ -2064,7 +2224,7 @@ program.command("update").description("Update Argus to the latest version").acti
     process.exit(1);
   }
 });
-program.command("analyze <path> <query>").description("Analyze a codebase or snapshot with AI").option("-p, --provider <provider>", "Override default provider").option("-t, --max-turns <n>", "Maximum reasoning turns", "15").option("-v, --verbose", "Show detailed execution logs").action(async (path2, query, opts) => {
+program.command("analyze <path> <query>").description("Analyze a codebase or snapshot with AI").option("-p, --provider <provider>", "Override default provider").option("-t, --max-turns <n>", "Maximum reasoning turns", "15").option("-v, --verbose", "Show detailed execution logs").action(async (path3, query, opts) => {
   const config = loadConfig();
   if (opts.provider) {
     config.provider = opts.provider;
@@ -2076,7 +2236,7 @@ program.command("analyze <path> <query>").description("Analyze a codebase or sna
     console.error("\nRun `argus init` to configure.");
     process.exit(1);
   }
-  const resolvedPath = resolve(path2);
+  const resolvedPath = resolve(path3);
   if (!existsSync4(resolvedPath)) {
     console.error(`File not found: ${resolvedPath}`);
     process.exit(1);
@@ -2131,14 +2291,14 @@ program.command("analyze <path> <query>").description("Analyze a codebase or sna
     }
   }
 });
-program.command("snapshot <path>").description("Create a codebase snapshot for analysis").option("-o, --output <file>", "Output file path").option("-e, --extensions <exts>", "File extensions to include (comma-separated)").option("--exclude <patterns>", "Patterns to exclude (comma-separated)").option("--basic", "Skip structural metadata (faster, smaller snapshot)").action((path2, opts) => {
+program.command("snapshot <path>").description("Create a codebase snapshot for analysis").option("-o, --output <file>", "Output file path").option("-e, --extensions <exts>", "File extensions to include (comma-separated)").option("--exclude <patterns>", "Patterns to exclude (comma-separated)").option("--basic", "Skip structural metadata (faster, smaller snapshot)").action((path3, opts) => {
   const config = loadConfig();
-  const resolvedPath = resolve(path2);
+  const resolvedPath = resolve(path3);
   if (!existsSync4(resolvedPath)) {
     console.error(`Path not found: ${resolvedPath}`);
     process.exit(1);
   }
-  const outputPath = opts.output || `${basename(resolvedPath)}-snapshot.txt`;
+  const outputPath = opts.output || `${basename2(resolvedPath)}-snapshot.txt`;
   console.log("\u{1F4F8} Creating codebase snapshot...");
   console.log(`   Source: ${resolvedPath}`);
   console.log(`   Output: ${outputPath}`);
@@ -2196,8 +2356,8 @@ program.command("search <snapshot> <pattern>").description("Fast grep search (no
     console.log(`${match.lineNum}: ${match.line.trim()}`);
   }
 });
-program.command("status [path]").description("Check if snapshot is up to date").option("-s, --snapshot <file>", "Snapshot file to check", ".argus/snapshot.txt").action((path2, opts) => {
-  const projectPath = path2 ? resolve(path2) : process.cwd();
+program.command("status [path]").description("Check if snapshot is up to date").option("-s, --snapshot <file>", "Snapshot file to check", ".argus/snapshot.txt").action((path3, opts) => {
+  const projectPath = path3 ? resolve(path3) : process.cwd();
   const snapshotPath = resolve(projectPath, opts.snapshot);
   console.log("\u{1F4CA} Argus Status\n");
   if (!existsSync4(snapshotPath)) {
@@ -2312,8 +2472,8 @@ exec argus-mcp "$@"
   ensureConfigDir();
   writeFileSync4(wrapperPath, wrapperScript, { mode: 493 });
   try {
-    execSync(`claude mcp remove argus -s user 2>/dev/null || true`, { stdio: "ignore" });
-    execSync(`claude mcp add argus -s user -- "${wrapperPath}"`, { stdio: "inherit" });
+    execSync2(`claude mcp remove argus -s user 2>/dev/null || true`, { stdio: "ignore" });
+    execSync2(`claude mcp add argus -s user -- "${wrapperPath}"`, { stdio: "inherit" });
     console.log("\n\u2705 Argus MCP server installed for Claude Code!");
   } catch {
     console.log("\n\u26A0\uFE0F  Could not automatically add to Claude Code.");
@@ -2345,7 +2505,7 @@ exec argus-mcp "$@"
 });
 mcpCommand.command("uninstall").description("Remove Argus from Claude Code").action(() => {
   try {
-    execSync("claude mcp remove argus -s user", { stdio: "inherit" });
+    execSync2("claude mcp remove argus -s user", { stdio: "inherit" });
     console.log("\n\u2705 Argus MCP server removed from Claude Code.");
   } catch {
     console.log("\n\u26A0\uFE0F  Could not remove from Claude Code.");
@@ -2354,7 +2514,7 @@ mcpCommand.command("uninstall").description("Remove Argus from Claude Code").act
   }
 });
 var contextCommand = program.command("context").description("Generate architectural context for CLAUDE.md (survives compaction)");
-contextCommand.command("generate <path>").description("Generate architecture summary for a project").option("-o, --output <file>", "Output file (default: stdout)").option("-f, --format <format>", "Output format: markdown, json", "markdown").action(async (path2, opts) => {
+contextCommand.command("generate <path>").description("Generate architecture summary for a project").option("-o, --output <file>", "Output file (default: stdout)").option("-f, --format <format>", "Output format: markdown, json", "markdown").action(async (path3, opts) => {
   const config = loadConfig();
   const errors = validateConfig(config);
   if (errors.length > 0) {
@@ -2362,7 +2522,7 @@ contextCommand.command("generate <path>").description("Generate architecture sum
     errors.forEach((e) => console.error(`  - ${e}`));
     process.exit(1);
   }
-  const resolvedPath = resolve(path2);
+  const resolvedPath = resolve(path3);
   if (!existsSync4(resolvedPath)) {
     console.error(`Path not found: ${resolvedPath}`);
     process.exit(1);
@@ -2410,7 +2570,7 @@ List with file paths and one-line descriptions.`;
       }
     });
     console.error("\n");
-    const projectName = basename(resolvedPath);
+    const projectName = basename2(resolvedPath);
     const output = generateContextMarkdown(projectName, {
       modules: moduleResult.answer || "Unable to analyze modules",
       patterns: patternResult.answer || "Unable to analyze patterns",
@@ -2430,13 +2590,13 @@ List with file paths and one-line descriptions.`;
     }
   }
 });
-contextCommand.command("inject <path>").description("Add/update architecture section in CLAUDE.md").action(async (path2) => {
-  const resolvedPath = resolve(path2);
+contextCommand.command("inject <path>").description("Add/update architecture section in CLAUDE.md").action(async (path3) => {
+  const resolvedPath = resolve(path3);
   const claudeMdPath = join4(resolvedPath, "CLAUDE.md");
   console.error("Generating context...\n");
-  const { execSync: execSync2 } = await import("child_process");
+  const { execSync: execSync3 } = await import("child_process");
   try {
-    const contextOutput = execSync2(
+    const contextOutput = execSync3(
       `argus context generate "${resolvedPath}"`,
       { encoding: "utf-8", maxBuffer: 10 * 1024 * 1024 }
     );
@@ -2466,10 +2626,10 @@ ${endMarker}`;
     process.exit(1);
   }
 });
-contextCommand.command("refresh <path>").description("Regenerate architecture context (run after major changes)").action(async (path2) => {
-  const resolvedPath = resolve(path2);
+contextCommand.command("refresh <path>").description("Regenerate architecture context (run after major changes)").action(async (path3) => {
+  const resolvedPath = resolve(path3);
   console.log("Refreshing codebase context...\n");
-  execSync(`argus context inject "${resolvedPath}"`, { stdio: "inherit" });
+  execSync2(`argus context inject "${resolvedPath}"`, { stdio: "inherit" });
 });
 function generateContextMarkdown(projectName, data) {
   return `## Codebase Intelligence (Auto-generated by Argus)
@@ -2700,7 +2860,7 @@ program.command("setup [path]").description("Set up Argus for a project (snapsho
   let projectConfig = onboardingConfig.projects[projectPath];
   if (!projectConfig && opts.onboarding !== false) {
     try {
-      projectConfig = await runProjectOnboarding(projectPath, onboardingConfig, fs, path);
+      projectConfig = await runProjectOnboarding(projectPath, onboardingConfig, fs, path2);
       config.onboarding = config.onboarding || DEFAULT_ONBOARDING_CONFIG;
       config.onboarding.projects[projectPath] = projectConfig;
       saveConfig(config);
@@ -2710,7 +2870,7 @@ program.command("setup [path]").description("Set up Argus for a project (snapsho
       }
     } catch {
       console.log("\n\u26A0\uFE0F  Interactive selection skipped (non-interactive terminal)");
-      const detected = detectPotentialKeyFiles(projectPath, onboardingConfig.globalKeyPatterns, fs, path);
+      const detected = detectPotentialKeyFiles(projectPath, onboardingConfig.globalKeyPatterns, fs, path2);
       projectConfig = {
         keyFiles: detected.filter((d) => d.matchedPattern).map((d) => d.path),
         customPatterns: [],
@@ -2795,6 +2955,82 @@ ${CLAUDE_MD_ARGUS_SECTION}`;
     if (projectConfig.keyFiles.length > 5) {
       console.log(`   ... and ${projectConfig.keyFiles.length - 5} more`);
     }
+  }
+});
+program.command("ui").description("Open the Argus web UI for codebase visualization").option("-p, --port <port>", "Port to serve on", "3333").option("--no-open", "Do not open browser automatically").action(async (opts) => {
+  const uiPath = join4(__dirname, "..", "packages", "ui");
+  if (!existsSync4(join4(uiPath, "package.json"))) {
+    console.error("Argus UI package not found.");
+    console.error("\nThe UI package needs to be installed separately:");
+    console.error("  cd packages/ui && npm install && npm run build");
+    process.exit(1);
+  }
+  const distPath = join4(uiPath, "dist");
+  const hasBuiltUI = existsSync4(distPath);
+  console.log("Starting Argus UI...\n");
+  try {
+    if (hasBuiltUI) {
+      console.log(`   Serving built UI from ${distPath}`);
+      console.log(`   Open http://localhost:${opts.port} in your browser`);
+      const http = await import("http");
+      const mimeTypes = {
+        ".html": "text/html",
+        ".js": "text/javascript",
+        ".css": "text/css",
+        ".json": "application/json",
+        ".png": "image/png",
+        ".svg": "image/svg+xml"
+      };
+      const server = http.createServer((req, res) => {
+        let filePath = join4(distPath, req.url === "/" ? "index.html" : req.url || "");
+        if (!existsSync4(filePath) && !filePath.includes(".")) {
+          filePath = join4(distPath, "index.html");
+        }
+        if (existsSync4(filePath)) {
+          const ext = path2.extname(filePath);
+          const contentType = mimeTypes[ext] || "application/octet-stream";
+          const content = readFileSync5(filePath);
+          res.writeHead(200, { "Content-Type": contentType });
+          res.end(content);
+        } else {
+          res.writeHead(404);
+          res.end("Not found");
+        }
+      });
+      const port = parseInt(opts.port, 10);
+      server.listen(port, () => {
+        console.log(`
+Argus UI running at http://localhost:${port}`);
+        if (opts.open !== false) {
+          const { spawn } = __require("child_process");
+          const openUrl = `http://localhost:${port}`;
+          const openCmd = process.platform === "darwin" ? "open" : process.platform === "win32" ? "start" : "xdg-open";
+          spawn(openCmd, [openUrl], { detached: true, stdio: "ignore" }).unref();
+        }
+      });
+      process.on("SIGINT", () => {
+        console.log("\n\nShutting down Argus UI...");
+        server.close();
+        process.exit(0);
+      });
+    } else {
+      console.log(`   Running development server...`);
+      console.log(`   Port: ${opts.port}`);
+      const { spawn } = __require("child_process");
+      const vite = spawn("npm", ["run", "dev", "--", "--port", opts.port], {
+        cwd: uiPath,
+        stdio: "inherit"
+      });
+      process.on("SIGINT", () => {
+        vite.kill();
+        process.exit(0);
+      });
+    }
+  } catch (error) {
+    console.error("Failed to start UI server:", error);
+    console.error("\nTry building the UI first:");
+    console.error("  cd packages/ui && npm install && npm run build");
+    process.exit(1);
   }
 });
 program.parse();

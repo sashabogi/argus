@@ -1142,5 +1142,114 @@ ${CLAUDE_MD_ARGUS_SECTION}`;
     }
   });
 
+// ============================================================================
+// argus ui - Open the web UI for visualization
+// ============================================================================
+program
+  .command('ui')
+  .description('Open the Argus web UI for codebase visualization')
+  .option('-p, --port <port>', 'Port to serve on', '3333')
+  .option('--no-open', 'Do not open browser automatically')
+  .action(async (opts) => {
+    const uiPath = join(__dirname, '..', 'packages', 'ui');
+
+    // Check if UI package exists and is built
+    if (!existsSync(join(uiPath, 'package.json'))) {
+      console.error('Argus UI package not found.');
+      console.error('\nThe UI package needs to be installed separately:');
+      console.error('  cd packages/ui && npm install && npm run build');
+      process.exit(1);
+    }
+
+    // Check if built
+    const distPath = join(uiPath, 'dist');
+    const hasBuiltUI = existsSync(distPath);
+
+    console.log('Starting Argus UI...\n');
+
+    try {
+      if (hasBuiltUI) {
+        // Serve built static files
+        console.log(`   Serving built UI from ${distPath}`);
+        console.log(`   Open http://localhost:${opts.port} in your browser`);
+
+        // Use a simple static file server
+        const http = await import('http');
+
+        const mimeTypes: Record<string, string> = {
+          '.html': 'text/html',
+          '.js': 'text/javascript',
+          '.css': 'text/css',
+          '.json': 'application/json',
+          '.png': 'image/png',
+          '.svg': 'image/svg+xml',
+        };
+
+        const server = http.createServer((req, res) => {
+          let filePath = join(distPath, req.url === '/' ? 'index.html' : req.url || '');
+
+          // Handle SPA routing - serve index.html for non-file routes
+          if (!existsSync(filePath) && !filePath.includes('.')) {
+            filePath = join(distPath, 'index.html');
+          }
+
+          if (existsSync(filePath)) {
+            const ext = path.extname(filePath);
+            const contentType = mimeTypes[ext] || 'application/octet-stream';
+            const content = readFileSync(filePath);
+            res.writeHead(200, { 'Content-Type': contentType });
+            res.end(content);
+          } else {
+            res.writeHead(404);
+            res.end('Not found');
+          }
+        });
+
+        const port = parseInt(opts.port, 10);
+        server.listen(port, () => {
+          console.log(`\nArgus UI running at http://localhost:${port}`);
+
+          if (opts.open !== false) {
+            // Open browser using spawn for safety
+            const { spawn } = require('child_process');
+            const openUrl = `http://localhost:${port}`;
+            const openCmd = process.platform === 'darwin' ? 'open' :
+                           process.platform === 'win32' ? 'start' : 'xdg-open';
+            spawn(openCmd, [openUrl], { detached: true, stdio: 'ignore' }).unref();
+          }
+        });
+
+        // Keep running
+        process.on('SIGINT', () => {
+          console.log('\n\nShutting down Argus UI...');
+          server.close();
+          process.exit(0);
+        });
+
+      } else {
+        // Run vite dev server
+        console.log(`   Running development server...`);
+        console.log(`   Port: ${opts.port}`);
+
+        // Use spawn instead of execSync for safety
+        const { spawn } = require('child_process');
+        const vite = spawn('npm', ['run', 'dev', '--', '--port', opts.port], {
+          cwd: uiPath,
+          stdio: 'inherit',
+        });
+
+        process.on('SIGINT', () => {
+          vite.kill();
+          process.exit(0);
+        });
+      }
+    } catch (error) {
+      console.error('Failed to start UI server:', error);
+      console.error('\nTry building the UI first:');
+      console.error('  cd packages/ui && npm install && npm run build');
+      process.exit(1);
+    }
+  });
+
 // Run
 program.parse();

@@ -12,7 +12,8 @@
  */
 
 import { existsSync, readFileSync, writeFileSync } from 'fs';
-import { join, relative, dirname, extname } from 'path';
+import { join, relative, dirname, extname, basename } from 'path';
+import { execSync } from 'child_process';
 import { createSnapshot, SnapshotOptions, SnapshotResult } from './snapshot.js';
 
 export interface ImportInfo {
@@ -40,6 +41,18 @@ export interface FileMetadata {
   lines: number;
 }
 
+export interface ComplexityInfo {
+  file: string;
+  score: number;
+  level: 'low' | 'medium' | 'high';
+}
+
+export interface RecentChangeInfo {
+  file: string;
+  commits: number;
+  authors: number;
+}
+
 export interface EnhancedSnapshotResult extends SnapshotResult {
   metadata: {
     imports: ImportInfo[];
@@ -48,6 +61,9 @@ export interface EnhancedSnapshotResult extends SnapshotResult {
     importGraph: Record<string, string[]>;  // file → files it imports
     exportGraph: Record<string, string[]>;  // file → files that import it
     symbolIndex: Record<string, string[]>;  // symbol → files that export it
+    complexityScores: ComplexityInfo[];     // cyclomatic complexity per file
+    testFileMap: Record<string, string[]>;  // source file → test files
+    recentChanges: RecentChangeInfo[] | null; // recent git changes (null if not git repo)
   };
 }
 
@@ -222,6 +238,160 @@ function parseExports(content: string, filePath: string): ExportInfo[] {
 }
 
 /**
+ * Calculate cyclomatic complexity for a file
+ * Counts decision points: if, else if, while, for, case, ternary, &&, ||, catch
+ */
+function calculateComplexity(content: string): number {
+  const patterns = [
+    /\bif\s*\(/g,
+    /\belse\s+if\s*\(/g,
+    /\bwhile\s*\(/g,
+    /\bfor\s*\(/g,
+    /\bcase\s+/g,
+    /\?\s*.*\s*:/g,
+    /\&\&/g,
+    /\|\|/g,
+    /\bcatch\s*\(/g,
+  ];
+
+  let complexity = 1; // Base complexity
+  for (const pattern of patterns) {
+    const matches = content.match(pattern);
+    if (matches) complexity += matches.length;
+  }
+  return complexity;
+}
+
+/**
+ * Get complexity level label
+ */
+function getComplexityLevel(score: number): 'low' | 'medium' | 'high' {
+  if (score <= 10) return 'low';
+  if (score <= 20) return 'medium';
+  return 'high';
+}
+
+/**
+ * Map source files to their test files
+ */
+function mapTestFiles(files: string[]): Record<string, string[]> {
+  const testMap: Record<string, string[]> = {};
+
+  // Common test file patterns
+  const testPatterns = [
+    // Same directory patterns
+    (src: string) => src.replace(/\.tsx?$/, '.test.ts'),
+    (src: string) => src.replace(/\.tsx?$/, '.test.tsx'),
+    (src: string) => src.replace(/\.tsx?$/, '.spec.ts'),
+    (src: string) => src.replace(/\.tsx?$/, '.spec.tsx'),
+    (src: string) => src.replace(/\.jsx?$/, '.test.js'),
+    (src: string) => src.replace(/\.jsx?$/, '.test.jsx'),
+    (src: string) => src.replace(/\.jsx?$/, '.spec.js'),
+    (src: string) => src.replace(/\.jsx?$/, '.spec.jsx'),
+    // __tests__ directory pattern
+    (src: string) => {
+      const dir = dirname(src);
+      const base = basename(src).replace(/\.(tsx?|jsx?)$/, '');
+      return join(dir, '__tests__', `${base}.test.ts`);
+    },
+    (src: string) => {
+      const dir = dirname(src);
+      const base = basename(src).replace(/\.(tsx?|jsx?)$/, '');
+      return join(dir, '__tests__', `${base}.test.tsx`);
+    },
+    // test/ directory pattern
+    (src: string) => src.replace(/^src\//, 'test/').replace(/\.(tsx?|jsx?)$/, '.test.ts'),
+    (src: string) => src.replace(/^src\//, 'tests/').replace(/\.(tsx?|jsx?)$/, '.test.ts'),
+  ];
+
+  // Create a set for fast lookup
+  const fileSet = new Set(files);
+
+  for (const file of files) {
+    // Skip test files themselves
+    if (file.includes('.test.') || file.includes('.spec.') || file.includes('__tests__')) continue;
+
+    // Only check source files
+    if (!/\.(tsx?|jsx?)$/.test(file)) continue;
+
+    const tests: string[] = [];
+    for (const pattern of testPatterns) {
+      const testPath = pattern(file);
+      // Only add if the path changed (pattern matched) AND test file exists
+      if (testPath !== file && fileSet.has(testPath)) {
+        tests.push(testPath);
+      }
+    }
+
+    if (tests.length > 0) {
+      testMap[file] = [...new Set(tests)]; // Dedupe
+    }
+  }
+  return testMap;
+}
+
+/**
+ * Get recent changes from git (last 7 days)
+ * Returns null if not a git repo
+ * Note: Uses execSync with hardcoded commands (no user input) for git operations
+ */
+function getRecentChanges(projectPath: string): RecentChangeInfo[] | null {
+  try {
+    // Check if it's a git repo - using execSync with hardcoded command
+    execSync('git rev-parse --git-dir', { cwd: projectPath, encoding: 'utf-8', stdio: 'pipe' });
+
+    // Get commits with file names and authors from last 7 days
+    // Note: This is a hardcoded git command with no user input, safe from injection
+    const output = execSync(
+      'git log --since="7 days ago" --name-only --format="COMMIT_AUTHOR:%an" --diff-filter=ACMR',
+      { cwd: projectPath, encoding: 'utf-8', maxBuffer: 10 * 1024 * 1024, stdio: 'pipe' }
+    );
+
+    if (!output.trim()) return [];
+
+    const fileStats: Record<string, { commits: Set<string>; authors: Set<string> }> = {};
+    let currentAuthor = '';
+    let currentCommitId = 0;
+
+    for (const line of output.split('\n')) {
+      const trimmed = line.trim();
+      if (!trimmed) {
+        currentCommitId++; // New commit block
+        continue;
+      }
+
+      if (trimmed.startsWith('COMMIT_AUTHOR:')) {
+        currentAuthor = trimmed.replace('COMMIT_AUTHOR:', '');
+        continue;
+      }
+
+      // It's a file name
+      const file = trimmed;
+      if (!fileStats[file]) {
+        fileStats[file] = { commits: new Set(), authors: new Set() };
+      }
+      fileStats[file].commits.add(`${currentCommitId}`);
+      if (currentAuthor) {
+        fileStats[file].authors.add(currentAuthor);
+      }
+    }
+
+    // Convert to array and sort by commit count (most active first)
+    const result: RecentChangeInfo[] = Object.entries(fileStats)
+      .map(([file, stats]) => ({
+        file,
+        commits: stats.commits.size,
+        authors: stats.authors.size,
+      }))
+      .sort((a, b) => b.commits - a.commits);
+
+    return result;
+  } catch {
+    return null; // Not a git repo or git not available
+  }
+}
+
+/**
  * Resolve a relative import path to an actual file
  */
 function resolveImportPath(importPath: string, fromFile: string, projectFiles: string[]): string | undefined {
@@ -323,7 +493,32 @@ export function createEnhancedSnapshot(
       symbolIndex[exp.symbol].push(exp.file);
     }
   }
-  
+
+  // Calculate complexity scores for all files
+  const complexityScores: ComplexityInfo[] = [];
+  for (const [relPath, metadata] of Object.entries(fileIndex)) {
+    const fullPath = join(projectPath, relPath);
+    try {
+      const content = readFileSync(fullPath, 'utf-8');
+      const score = calculateComplexity(content);
+      complexityScores.push({
+        file: relPath,
+        score,
+        level: getComplexityLevel(score),
+      });
+    } catch {
+      // Skip files that can't be read
+    }
+  }
+  // Sort by complexity score (highest first)
+  complexityScores.sort((a, b) => b.score - a.score);
+
+  // Map test files to source files
+  const testFileMap = mapTestFiles(baseResult.files);
+
+  // Get recent git changes (null if not a git repo)
+  const recentChanges = getRecentChanges(projectPath);
+
   // Append metadata to snapshot file
   const metadataSection = `
 
@@ -346,12 +541,39 @@ ${allExports.map(e => `${e.file}:${e.line} - ${e.type} ${e.symbol}${e.signature 
 METADATA: WHO IMPORTS WHOM
 ================================================================================
 ${Object.entries(exportGraph).map(([file, importers]) => `${file} is imported by:\n${importers.map(i => `  ← ${i}`).join('\n')}`).join('\n\n')}
+
+================================================================================
+METADATA: COMPLEXITY SCORES
+================================================================================
+${complexityScores.map(c => `${c.file}: ${c.score} (${c.level})`).join('\n')}
+
+================================================================================
+METADATA: TEST COVERAGE MAP
+================================================================================
+${Object.entries(testFileMap).length > 0
+  ? Object.entries(testFileMap).map(([src, tests]) => `${src} -> ${tests.join(', ')}`).join('\n')
+  : '(no test file mappings found)'}
+${baseResult.files.filter(f =>
+    /\.(tsx?|jsx?)$/.test(f) &&
+    !f.includes('.test.') &&
+    !f.includes('.spec.') &&
+    !f.includes('__tests__') &&
+    !testFileMap[f]
+  ).map(f => `${f} -> (no tests)`).join('\n')}
+${recentChanges !== null ? `
+
+================================================================================
+METADATA: RECENT CHANGES (last 7 days)
+================================================================================
+${recentChanges.length > 0
+  ? recentChanges.map(c => `${c.file}: ${c.commits} commit${c.commits !== 1 ? 's' : ''}, ${c.authors} author${c.authors !== 1 ? 's' : ''}`).join('\n')
+  : '(no changes in the last 7 days)'}` : ''}
 `;
-  
+
   // Append to snapshot
   const existingContent = readFileSync(outputPath, 'utf-8');
   writeFileSync(outputPath, existingContent + metadataSection);
-  
+
   return {
     ...baseResult,
     metadata: {
@@ -361,6 +583,9 @@ ${Object.entries(exportGraph).map(([file, importers]) => `${file} is imported by
       importGraph,
       exportGraph,
       symbolIndex,
+      complexityScores,
+      testFileMap,
+      recentChanges,
     },
   };
 }

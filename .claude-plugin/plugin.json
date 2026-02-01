@@ -1,0 +1,12 @@
+{
+  "name": "argus",
+  "version": "2.0.0",
+  "description": "Codebase Intelligence Beyond Context Limits",
+  "type": "mcp",
+  "mcp": {
+    "command": "argus-mcp"
+  },
+  "hooks": {
+    "directory": "./hooks"
+  }
+}
