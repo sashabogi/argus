@@ -1,4 +1,4 @@
-export { DependencyGraph } from './DependencyGraph';
+export { DependencyAnalysis } from './DependencyAnalysis';
 export { FileExplorer } from './FileExplorer';
 export { FileViewer } from './FileViewer';
 export { SearchResults } from './SearchResults';

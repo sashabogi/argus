@@ -1,21 +1,21 @@
 import { useState, useCallback, useEffect, useMemo } from 'react';
 import {
-  DependencyGraph,
+  DependencyAnalysis,
   FileExplorer,
   FileViewer,
   SearchResults,
   Stats,
 } from './components';
-import { parseSnapshot, buildFileTree, getGroupFromPath } from './utils/parser';
-import type { SnapshotData, GraphNode, GraphLink, TreeNode } from './types';
+import { parseSnapshot, buildFileTree } from './utils/parser';
+import type { SnapshotData, TreeNode } from './types';
 
-type Tab = 'graph' | 'files' | 'search' | 'stats';
+type Tab = 'analysis' | 'files' | 'search' | 'stats';
 
 export default function App() {
   const [snapshot, setSnapshot] = useState<SnapshotData | null>(null);
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
   const [highlightLine, setHighlightLine] = useState<number | undefined>();
-  const [activeTab, setActiveTab] = useState<Tab>('graph');
+  const [activeTab, setActiveTab] = useState<Tab>('analysis');
   const [isDragging, setIsDragging] = useState(false);
 
   // Auto-load snapshot from local server on startup
@@ -45,63 +45,6 @@ export default function App() {
     return buildFileTree(snapshot.metadata.files);
   }, [snapshot]);
 
-  // Build graph data from snapshot
-  const { nodes, links } = useMemo(() => {
-    if (!snapshot?.metadata) {
-      return { nodes: [], links: [] };
-    }
-
-    const nodeMap = new Map<string, GraphNode>();
-    const linkSet = new Set<string>();
-    const graphLinks: GraphLink[] = [];
-
-    // Add nodes for each file
-    for (const file of snapshot.metadata.files) {
-      nodeMap.set(file.path, {
-        id: file.path,
-        group: getGroupFromPath(file.path),
-        lines: file.lines,
-        extension: file.extension,
-      });
-    }
-
-    // Helper to find node with extension variants (.js -> .ts, .jsx -> .tsx, etc.)
-    const findNode = (path: string): string | null => {
-      if (nodeMap.has(path)) return path;
-      // Try common extension mappings
-      const variants = [
-        path.replace(/\.js$/, '.ts'),
-        path.replace(/\.jsx$/, '.tsx'),
-        path.replace(/\.mjs$/, '.ts'),
-        path.replace(/\.js$/, '.tsx'),
-        path.replace(/\.ts$/, '.js'),
-        path.replace(/\.tsx$/, '.jsx'),
-      ];
-      for (const variant of variants) {
-        if (nodeMap.has(variant)) return variant;
-      }
-      return null;
-    };
-
-    // Add links from imports
-    for (const imp of snapshot.metadata.imports) {
-      const source = findNode(imp.source);
-      const target = findNode(imp.target);
-      // Only add if both source and target exist as nodes
-      if (source && target) {
-        const key = `${source}->${target}`;
-        if (!linkSet.has(key)) {
-          linkSet.add(key);
-          graphLinks.push({ source, target });
-        }
-      }
-    }
-
-    return {
-      nodes: Array.from(nodeMap.values()),
-      links: graphLinks,
-    };
-  }, [snapshot]);
 
   // Handle file drop
   const handleDrop = useCallback((e: React.DragEvent) => {
@@ -145,12 +88,6 @@ export default function App() {
         element?.scrollIntoView({ behavior: 'smooth', block: 'center' });
       }, 100);
     }
-  }, []);
-
-  // Handle node click in graph
-  const handleNodeClick = useCallback((nodeId: string) => {
-    setSelectedFile(nodeId);
-    setHighlightLine(undefined);
   }, []);
 
   // Load demo snapshot from textarea
@@ -310,10 +247,10 @@ export default function App() {
           <aside className="w-72 border-r border-argus-border flex flex-col">
             <div className="flex border-b border-argus-border">
               <button
-                className={tabClass('graph')}
-                onClick={() => setActiveTab('graph')}
+                className={tabClass('analysis')}
+                onClick={() => setActiveTab('analysis')}
               >
-                Graph
+                Analysis
               </button>
               <button
                 className={tabClass('files')}
@@ -352,11 +289,10 @@ export default function App() {
               {activeTab === 'stats' && (
                 <Stats metadata={snapshot.metadata} />
               )}
-              {activeTab === 'graph' && (
+              {activeTab === 'analysis' && (
                 <div className="p-4 text-sm text-argus-muted">
-                  <p>Dependency graph is displayed in the main area.</p>
-                  <p className="mt-2">Click a node to view the file.</p>
-                  <p className="mt-1">Scroll to zoom, drag to pan.</p>
+                  <p>Dependency analysis is displayed in the main area.</p>
+                  <p className="mt-2">Click a row to view the file.</p>
                 </div>
               )}
             </div>
@@ -364,14 +300,14 @@ export default function App() {
 
           {/* Main content area */}
           <main className="flex-1 flex flex-col overflow-hidden">
-            {activeTab === 'graph' ? (
-              <div className="flex-1 p-4">
-                {nodes.length > 0 ? (
-                  <DependencyGraph
-                    nodes={nodes}
-                    links={links}
-                    selectedNode={selectedFile}
-                    onNodeClick={handleNodeClick}
+            {activeTab === 'analysis' ? (
+              <div className="flex-1 overflow-hidden">
+                {snapshot.metadata ? (
+                  <DependencyAnalysis
+                    files={snapshot.metadata.files}
+                    imports={snapshot.metadata.imports}
+                    onFileSelect={handleFileSelect}
+                    selectedFile={selectedFile}
                   />
                 ) : (
                   <div className="flex items-center justify-center h-full text-argus-muted">
