@@ -242,15 +242,26 @@ You can! `search_codebase` is essentially grep. But Argus also gives you:
 
 ## Acknowledgments
 
-Argus combines ideas from two projects:
+Argus combines ideas from several projects:
 
 ### Matryoshka RLM
 
-The core analysis engine is based on [Matryoshka](https://github.com/yogthos/Matryoshka) by Dmitri Sotnikov. It introduced **Recursive Language Models** - using an LLM to generate symbolic commands that navigate large documents. This achieves 93% token savings compared to naive approaches.
+The core analysis engine is based on [Matryoshka](https://github.com/yogthos/Matryoshka) by [Dmitri Sotnikov (yogthos)](https://github.com/yogthos). It introduced **Recursive Language Models (RLM)** - using an LLM to generate symbolic commands via the [Nucleus DSL](https://github.com/michaelwhitford/nucleus) that navigate large documents. This achieves 93% token savings compared to naive approaches.
+
+The approach is described in the [RLM research paper](https://arxiv.org/abs/2512.24601).
 
 ### claude-mem
 
-The progressive disclosure architecture and Claude Code integration patterns are inspired by [claude-mem](https://github.com/thedotmack/claude-mem) by thedotmack. The idea of "search first, fetch details only when needed" dramatically reduces token usage.
+The progressive disclosure architecture and Claude Code integration patterns are inspired by [claude-mem](https://github.com/thedotmack/claude-mem) by [thedotmack](https://github.com/thedotmack). The idea of "search first, fetch details only when needed" dramatically reduces token usage.
+
+---
+
+## Related Projects
+
+- [Matryoshka RLM](https://github.com/yogthos/Matryoshka) - The original RLM implementation
+- [Nucleus DSL](https://github.com/michaelwhitford/nucleus) - Symbolic language for document operations
+- [claude-mem](https://github.com/thedotmack/claude-mem) - Progressive disclosure patterns for Claude Code
+- [RLM Paper](https://arxiv.org/abs/2512.24601) - Academic research on Recursive Language Models
 
 ---
 
