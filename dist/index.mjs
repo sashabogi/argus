@@ -494,8 +494,13 @@ function evaluateExpr(expr, content, bindings) {
       const pattern = evaluateExpr(args[0], content, bindings);
       const flags = args[1] ? evaluateExpr(args[1], content, bindings) : "";
       const regex = new RegExp(pattern, flags + "g");
-      const lines = content.split("\n");
+      let lines = bindings.get("__cached_lines__");
+      if (!lines) {
+        lines = content.split("\n");
+        bindings.set("__cached_lines__", lines);
+      }
       const matches = [];
+      const MAX_MATCHES = 1e3;
       let charIndex = 0;
       for (let lineNum = 0; lineNum < lines.length; lineNum++) {
         const line = lines[lineNum];
@@ -509,6 +514,9 @@ function evaluateExpr(expr, content, bindings) {
             index: charIndex + match.index,
             groups: match.slice(1)
           });
+          if (matches.length >= MAX_MATCHES) {
+            return matches;
+          }
         }
         charIndex += line.length + 1;
       }
@@ -610,7 +618,7 @@ async function analyze(provider, documentPath, query, options = {}) {
   const dynamicLimit = Math.min(getTurnLimit(query), maxTurns);
   const content = readFileSync3(documentPath, "utf-8");
   const fileCount = (content.match(/^FILE:/gm) || []).length;
-  const lineCount = content.split("\n").length;
+  const lineCount = (content.match(/\n/g) || []).length + 1;
   const bindings = /* @__PURE__ */ new Map();
   const commands = [];
   const messages = [

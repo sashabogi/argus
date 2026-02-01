@@ -187,9 +187,15 @@ function evaluateExpr(expr: SExpr, content: string, bindings: Map<string, unknow
       const pattern = evaluateExpr(args[0], content, bindings) as string;
       const flags = args[1] ? evaluateExpr(args[1], content, bindings) as string : '';
       const regex = new RegExp(pattern, flags + 'g');
-      const lines = content.split('\n');
+      // Cache lines array to avoid re-splitting on every grep (major memory optimization)
+      let lines = bindings.get('__cached_lines__') as string[] | undefined;
+      if (!lines) {
+        lines = content.split('\n');
+        bindings.set('__cached_lines__', lines);
+      }
       const matches: GrepMatch[] = [];
-      
+      const MAX_MATCHES = 1000; // Prevent memory explosion
+
       let charIndex = 0;
       for (let lineNum = 0; lineNum < lines.length; lineNum++) {
         const line = lines[lineNum];
@@ -203,10 +209,13 @@ function evaluateExpr(expr: SExpr, content: string, bindings: Map<string, unknow
             index: charIndex + match.index,
             groups: match.slice(1),
           });
+          if (matches.length >= MAX_MATCHES) {
+            return matches;
+          }
         }
         charIndex += line.length + 1;
       }
-      
+
       return matches;
     }
     
@@ -343,11 +352,11 @@ export async function analyze(
   
   // Load document
   const content = readFileSync(documentPath, 'utf-8');
-  
-  // Get document stats for context
+
+  // Get document stats for context (count newlines without splitting)
   const fileCount = (content.match(/^FILE:/gm) || []).length;
-  const lineCount = content.split('\n').length;
-  
+  const lineCount = (content.match(/\n/g) || []).length + 1;
+
   const bindings = new Map<string, unknown>();
   const commands: string[] = [];
   const messages: Message[] = [
