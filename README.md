@@ -6,7 +6,7 @@ Argus solves a fundamental problem: **your codebase is too big to fit in an LLM'
 
 Argus creates intelligent **snapshots** of your codebase and provides tools that let Claude explore them efficiently. Instead of trying to load everything at once, Claude can search, navigate, and analyze your code piece by piece - just like a human developer would.
 
-![Codebase Explorer](docs/images/codebase-explorer.png)
+![Argus Analysis Dashboard](docs/images/argus-analysis.png)
 
 ## How It Works
 
@@ -120,10 +120,12 @@ argus ui
 ```
 
 Opens a browser with:
-- **Dependency graph** - Interactive D3.js visualization of imports
+- **Dependency graph** - Interactive visualization of imports with entry points and high-coupling highlights
 - **File explorer** - Browse files with line counts
 - **Search** - Full-text search with highlighting
 - **Code viewer** - Read any file from the snapshot
+
+![Argus Dependency Graph](docs/images/argus-graph.png)
 
 Drag and drop a snapshot file, or paste its contents directly.
 

@@ -1,4 +1,8 @@
 import { useState, useCallback } from 'react';
+import { ChevronDown, ChevronRight, File, Folder, FolderOpen, Maximize2, Minimize2 } from 'lucide-react';
+import { ScrollArea } from '@/components/ui/scroll-area';
+import { Button } from '@/components/ui/button';
+import { cn } from '@/lib/utils';
 import type { TreeNode } from '../types';
 import { getExtensionColor } from '../utils/parser';
 
@@ -40,66 +44,50 @@ function TreeItem({
   const getIcon = () => {
     if (node.type === 'directory') {
       return isExpanded ? (
-        <svg
-          className="w-4 h-4 text-argus-muted"
-          fill="none"
-          stroke="currentColor"
-          viewBox="0 0 24 24"
-        >
-          <path
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            strokeWidth={2}
-            d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"
-          />
-        </svg>
+        <FolderOpen className="h-4 w-4 text-muted-foreground" />
       ) : (
-        <svg
-          className="w-4 h-4 text-argus-muted"
-          fill="none"
-          stroke="currentColor"
-          viewBox="0 0 24 24"
-        >
-          <path
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            strokeWidth={2}
-            d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"
-          />
-        </svg>
+        <Folder className="h-4 w-4 text-muted-foreground" />
       );
     }
 
     // File icon with extension color
-    const color = node.extension ? getExtensionColor(node.extension) : '#8b949e';
+    const color = node.extension ? getExtensionColor(node.extension) : undefined;
     return (
-      <svg
-        className="w-4 h-4"
-        fill={color}
-        viewBox="0 0 24 24"
-      >
-        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8l-6-6z" />
-        <polyline points="14,2 14,8 20,8" fill="none" stroke={color} strokeWidth="1" />
-      </svg>
+      <File
+        className="h-4 w-4"
+        style={color ? { color } : undefined}
+      />
     );
   };
 
   return (
     <>
       <div
-        className={`file-tree-item ${isSelected ? 'selected' : ''}`}
+        className={cn(
+          'flex items-center gap-1 px-2 py-1 cursor-pointer rounded-sm transition-colors',
+          isSelected
+            ? 'bg-accent text-accent-foreground'
+            : 'hover:bg-muted/50'
+        )}
         style={{ paddingLeft: `${depth * 12 + 8}px` }}
         onClick={handleClick}
       >
         {node.type === 'directory' && (
-          <span className="text-argus-muted text-xs">
-            {isExpanded ? '▼' : '▶'}
+          <span className="text-muted-foreground">
+            {isExpanded ? (
+              <ChevronDown className="h-3 w-3" />
+            ) : (
+              <ChevronRight className="h-3 w-3" />
+            )}
           </span>
         )}
+        {node.type === 'file' && <span className="w-3" />}
         {getIcon()}
         <span className="truncate flex-1 text-sm">{node.name}</span>
         {node.lines !== undefined && (
-          <span className="text-xs text-argus-muted">{node.lines}</span>
+          <span className="text-xs text-muted-foreground tabular-nums">
+            {node.lines}
+          </span>
         )}
       </div>
       {isExpanded && hasChildren && (
@@ -160,7 +148,7 @@ export function FileExplorer({
 
   if (!tree.children || tree.children.length === 0) {
     return (
-      <div className="p-4 text-argus-muted text-sm">
+      <div className="p-4 text-muted-foreground text-sm">
         No files loaded. Drop a snapshot file or enter a path.
       </div>
     );
@@ -168,33 +156,41 @@ export function FileExplorer({
 
   return (
     <div className="flex flex-col h-full">
-      <div className="flex gap-2 p-2 border-b border-argus-border">
-        <button
+      <div className="flex gap-1 p-2 border-b">
+        <Button
+          variant="ghost"
+          size="sm"
           onClick={expandAll}
-          className="text-xs text-argus-muted hover:text-argus-text px-2 py-1 rounded hover:bg-argus-dark transition-colors"
+          className="h-7 px-2 text-xs"
         >
-          Expand All
-        </button>
-        <button
+          <Maximize2 className="h-3 w-3 mr-1" />
+          Expand
+        </Button>
+        <Button
+          variant="ghost"
+          size="sm"
           onClick={collapseAll}
-          className="text-xs text-argus-muted hover:text-argus-text px-2 py-1 rounded hover:bg-argus-dark transition-colors"
+          className="h-7 px-2 text-xs"
         >
-          Collapse All
-        </button>
+          <Minimize2 className="h-3 w-3 mr-1" />
+          Collapse
+        </Button>
       </div>
-      <div className="overflow-y-auto flex-1">
-        {tree.children.map((child) => (
-          <TreeItem
-            key={child.path}
-            node={child}
-            depth={0}
-            onFileSelect={onFileSelect}
-            selectedFile={selectedFile}
-            expandedPaths={expandedPaths}
-            toggleExpanded={toggleExpanded}
-          />
-        ))}
-      </div>
+      <ScrollArea className="flex-1">
+        <div className="py-1">
+          {tree.children.map((child) => (
+            <TreeItem
+              key={child.path}
+              node={child}
+              depth={0}
+              onFileSelect={onFileSelect}
+              selectedFile={selectedFile}
+              expandedPaths={expandedPaths}
+              toggleExpanded={toggleExpanded}
+            />
+          ))}
+        </div>
+      </ScrollArea>
     </div>
   );
 }

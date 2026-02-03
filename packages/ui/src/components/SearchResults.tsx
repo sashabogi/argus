@@ -1,4 +1,10 @@
 import { useState, useMemo } from 'react';
+import { Search } from 'lucide-react';
+import { Input } from '@/components/ui/input';
+import { Badge } from '@/components/ui/badge';
+import { ScrollArea } from '@/components/ui/scroll-area';
+import { Checkbox } from '@/components/ui/checkbox';
+import { Label } from '@/components/ui/label';
 import type { SnapshotData } from '../types';
 import { searchSnapshot } from '../utils/parser';
 
@@ -51,81 +57,72 @@ export function SearchResults({ data, onFileSelect }: SearchResultsProps) {
 
   return (
     <div className="flex flex-col h-full">
-      <div className="p-3 border-b border-argus-border">
+      <div className="p-3 border-b space-y-3">
         <div className="relative">
-          <input
+          <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+          <Input
             type="text"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder="Search in codebase... (regex supported)"
-            className="search-input pr-10"
+            className="pl-9"
           />
-          <svg
-            className="absolute right-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-argus-muted"
-            fill="none"
-            stroke="currentColor"
-            viewBox="0 0 24 24"
-          >
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeWidth={2}
-              d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"
-            />
-          </svg>
         </div>
-        <div className="flex items-center gap-4 mt-2">
-          <label className="flex items-center gap-2 text-xs text-argus-muted cursor-pointer">
-            <input
-              type="checkbox"
+        <div className="flex items-center justify-between">
+          <div className="flex items-center space-x-2">
+            <Checkbox
+              id="case-sensitive"
               checked={caseSensitive}
-              onChange={(e) => setCaseSensitive(e.target.checked)}
-              className="rounded border-argus-border bg-argus-dark"
+              onCheckedChange={(checked) => setCaseSensitive(checked as boolean)}
             />
-            Case sensitive
-          </label>
+            <Label
+              htmlFor="case-sensitive"
+              className="text-xs text-muted-foreground cursor-pointer"
+            >
+              Case sensitive
+            </Label>
+          </div>
           {results.length > 0 && (
-            <span className="text-xs text-argus-muted">
-              {results.length} result{results.length !== 1 ? 's' : ''} in{' '}
-              {groupedResults.size} file{groupedResults.size !== 1 ? 's' : ''}
-            </span>
+            <Badge variant="secondary" className="text-xs">
+              {results.length} in {groupedResults.size} file{groupedResults.size !== 1 ? 's' : ''}
+            </Badge>
           )}
         </div>
       </div>
 
-      <div className="overflow-y-auto flex-1">
+      <ScrollArea className="flex-1">
         {query.length > 0 && query.length < 2 && (
-          <div className="p-4 text-argus-muted text-sm">
+          <div className="p-4 text-muted-foreground text-sm">
             Type at least 2 characters to search
           </div>
         )}
 
         {query.length >= 2 && results.length === 0 && (
-          <div className="p-4 text-argus-muted text-sm">
+          <div className="p-4 text-muted-foreground text-sm">
             No results found for "{query}"
           </div>
         )}
 
         {Array.from(groupedResults.entries()).map(([file, matches]) => (
-          <div key={file} className="border-b border-argus-border">
-            <div className="px-3 py-2 bg-argus-dark text-sm font-medium text-argus-accent truncate">
-              {file}
-              <span className="text-argus-muted ml-2">
-                ({matches.length})
-              </span>
+          <div key={file} className="border-b">
+            <div className="px-3 py-2 bg-muted/50 text-sm font-medium text-primary truncate flex items-center justify-between">
+              <span className="truncate">{file}</span>
+              <Badge variant="outline" className="text-xs ml-2 shrink-0">
+                {matches.length}
+              </Badge>
             </div>
-            <div className="divide-y divide-argus-border">
+            <div className="divide-y divide-border/50">
               {matches.map((match, idx) => (
                 <div
                   key={`${match.line}-${idx}`}
-                  className="px-3 py-2 hover:bg-argus-dark cursor-pointer transition-colors"
+                  className="px-3 py-2 hover:bg-muted/50 cursor-pointer transition-colors"
                   onClick={() => handleResultClick(file, match.line)}
                 >
                   <div className="flex items-start gap-2">
-                    <span className="text-xs text-argus-muted font-mono min-w-[40px]">
+                    <span className="text-xs text-muted-foreground font-mono min-w-[40px] tabular-nums">
                       {match.line}
                     </span>
-                    <code className="text-sm break-all text-argus-text">
+                    <code className="text-sm break-all">
                       {highlightMatch(match.content, query, caseSensitive)}
                     </code>
                   </div>
@@ -134,7 +131,7 @@ export function SearchResults({ data, onFileSelect }: SearchResultsProps) {
             </div>
           </div>
         ))}
-      </div>
+      </ScrollArea>
     </div>
   );
 }
@@ -152,7 +149,7 @@ function highlightMatch(
       if (regex.test(part)) {
         regex.lastIndex = 0; // Reset after test
         return (
-          <span key={i} className="bg-argus-yellow text-argus-darker px-0.5 rounded">
+          <span key={i} className="bg-chart-4/30 text-chart-4 px-0.5 rounded">
             {part}
           </span>
         );

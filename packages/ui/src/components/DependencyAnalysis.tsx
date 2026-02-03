@@ -1,15 +1,30 @@
 import { useMemo, useState } from 'react';
-import type { ImportEdge, FileInfo } from '../types';
+import {
+  FileCode2,
+  GitBranch,
+  ArrowRightLeft,
+  AlertTriangle,
+  CheckCircle2,
+  Activity,
+  FileWarning,
+  Link2,
+  ChevronDown,
+  ChevronUp,
+  Code2,
+  Package
+} from 'lucide-react';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Badge } from '@/components/ui/badge';
+import { cn } from '@/lib/utils';
+import type { ImportEdge, FileInfo, SnapshotMetadata } from '../types';
 
 interface DependencyAnalysisProps {
   files: FileInfo[];
   imports: ImportEdge[];
   onFileSelect?: (path: string) => void;
   selectedFile?: string | null;
+  metadata?: SnapshotMetadata | null;
 }
-
-type SortField = 'path' | 'count';
-type SortDirection = 'asc' | 'desc';
 
 interface AnalysisRow {
   path: string;
@@ -26,203 +41,230 @@ function getFileName(path: string): string {
   return parts[parts.length - 1];
 }
 
-function AnalysisTable({
+// Compact stat card for KPI row
+function StatCard({
+  label,
+  value,
+  icon,
+  status = 'neutral'
+}: {
+  label: string;
+  value: number | string;
+  icon?: React.ReactNode;
+  status?: 'good' | 'warning' | 'bad' | 'neutral';
+}) {
+  return (
+    <div className={cn(
+      "flex flex-col items-center justify-center p-3 rounded-lg border min-w-0",
+      status === 'good' && "bg-emerald-950/50 border-emerald-800/60",
+      status === 'bad' && "bg-red-950/50 border-red-800/60",
+      status === 'warning' && "bg-amber-950/50 border-amber-800/60",
+      status === 'neutral' && "bg-neutral-900 border-neutral-700/60",
+    )}>
+      <div className="flex items-center gap-1.5 mb-0.5">
+        {icon && <span className="text-muted-foreground">{icon}</span>}
+        <span className={cn(
+          "text-2xl font-bold tabular-nums",
+          status === 'good' && "text-emerald-400",
+          status === 'bad' && "text-red-400",
+          status === 'warning' && "text-amber-400",
+          status === 'neutral' && "text-foreground",
+        )}>{value}</span>
+      </div>
+      <span className="text-[10px] text-muted-foreground uppercase tracking-wide">{label}</span>
+    </div>
+  );
+}
+
+// Compact table with fixed height and no scroll capture
+function CompactTable({
   title,
-  description,
   rows,
   onFileSelect,
   selectedFile,
   countLabel,
   emptyMessage,
+  maxItems = 10,
 }: {
   title: string;
-  description: string;
   rows: AnalysisRow[];
   onFileSelect?: (path: string) => void;
   selectedFile?: string | null;
   countLabel: string;
   emptyMessage: string;
+  maxItems?: number;
 }) {
-  const [sortField, setSortField] = useState<SortField>('count');
-  const [sortDirection, setSortDirection] = useState<SortDirection>('desc');
-
-  const sortedRows = useMemo(() => {
-    return [...rows].sort((a, b) => {
-      const multiplier = sortDirection === 'asc' ? 1 : -1;
-      if (sortField === 'count') {
-        return (a.count - b.count) * multiplier;
-      }
-      return a.path.localeCompare(b.path) * multiplier;
-    });
-  }, [rows, sortField, sortDirection]);
-
-  const handleSort = (field: SortField) => {
-    if (sortField === field) {
-      setSortDirection(sortDirection === 'asc' ? 'desc' : 'asc');
-    } else {
-      setSortField(field);
-      setSortDirection(field === 'count' ? 'desc' : 'asc');
-    }
-  };
-
-  const maxCount = Math.max(...rows.map((r) => r.count), 1);
-
-  const SortIcon = ({ field }: { field: SortField }) => {
-    if (sortField !== field) return null;
-    return (
-      <span className="ml-1 text-argus-accent">
-        {sortDirection === 'asc' ? '\u2191' : '\u2193'}
-      </span>
-    );
-  };
+  const [expanded, setExpanded] = useState(false);
+  const displayRows = expanded ? rows : rows.slice(0, maxItems);
+  const hasMore = rows.length > maxItems;
 
   return (
-    <div className="panel">
-      <div className="panel-header flex justify-between items-center">
-        <span>{title}</span>
-        <span className="text-xs font-normal normal-case tracking-normal">
-          {rows.length} items
-        </span>
-      </div>
-      <p className="px-4 py-2 text-xs text-argus-muted border-b border-argus-border">
-        {description}
-      </p>
-      {rows.length === 0 ? (
-        <div className="p-4 text-sm text-argus-muted">{emptyMessage}</div>
-      ) : (
-        <div className="max-h-64 overflow-y-auto">
-          <table className="w-full text-sm">
-            <thead className="sticky top-0 bg-argus-dark">
-              <tr className="border-b border-argus-border">
-                <th
-                  className="text-left px-4 py-2 text-argus-muted font-medium cursor-pointer hover:text-argus-text transition-colors"
-                  onClick={() => handleSort('path')}
-                >
-                  File
-                  <SortIcon field="path" />
-                </th>
-                <th
-                  className="text-right px-4 py-2 text-argus-muted font-medium cursor-pointer hover:text-argus-text transition-colors w-32"
-                  onClick={() => handleSort('count')}
-                >
-                  {countLabel}
-                  <SortIcon field="count" />
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              {sortedRows.map((row) => (
-                <tr
-                  key={row.path}
-                  className={`border-b border-argus-border/50 cursor-pointer transition-colors ${
-                    selectedFile === row.path
-                      ? 'bg-argus-accent/10'
-                      : 'hover:bg-argus-dark'
-                  }`}
-                  onClick={() => onFileSelect?.(row.path)}
-                >
-                  <td className="px-4 py-2">
-                    <div className="flex items-center gap-2">
-                      <span
-                        className="font-mono text-argus-text truncate"
-                        title={row.path}
-                      >
-                        {getFileName(row.path)}
-                      </span>
-                      <span className="text-argus-muted text-xs truncate hidden sm:inline">
-                        {row.path.replace(getFileName(row.path), '')}
-                      </span>
-                    </div>
-                  </td>
-                  <td className="px-4 py-2">
-                    <div className="flex items-center justify-end gap-2">
-                      <div className="w-16 h-1.5 bg-argus-darker rounded-full overflow-hidden">
-                        <div
-                          className="h-full bg-argus-accent rounded-full"
-                          style={{
-                            width: `${(row.count / maxCount) * 100}%`,
-                          }}
-                        />
-                      </div>
-                      <span className="font-mono text-argus-accent w-8 text-right">
-                        {row.count}
-                      </span>
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+    <Card className="flex flex-col">
+      <CardHeader className="pb-2 pt-3 px-3">
+        <div className="flex items-center justify-between">
+          <CardTitle className="text-sm font-medium">{title}</CardTitle>
+          <Badge variant="secondary" className="text-[10px] px-1.5 py-0">
+            {rows.length}
+          </Badge>
         </div>
-      )}
-    </div>
+      </CardHeader>
+      <CardContent className="pt-0 px-3 pb-3 flex-1">
+        {rows.length === 0 ? (
+          <p className="text-xs text-muted-foreground py-2">{emptyMessage}</p>
+        ) : (
+          <>
+            <div
+              className="max-h-[240px] overflow-y-auto "
+              style={{ scrollbarWidth: 'thin' }}
+            >
+              <table className="w-full text-xs">
+                <thead className="sticky top-0 bg-card z-10">
+                  <tr className="border-b border-border/50">
+                    <th className="text-left py-1.5 pr-2 text-muted-foreground font-medium">
+                      File
+                    </th>
+                    <th className="text-right py-1.5 text-muted-foreground font-medium w-16">
+                      {countLabel}
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {displayRows.map((row) => (
+                    <tr
+                      key={row.path}
+                      className={cn(
+                        'border-b border-border/30 cursor-pointer transition-colors',
+                        selectedFile === row.path
+                          ? 'bg-accent'
+                          : 'hover:bg-muted/50'
+                      )}
+                      onClick={() => onFileSelect?.(row.path)}
+                    >
+                      <td className="py-1.5 pr-2">
+                        <span
+                          className="font-mono text-foreground truncate block max-w-[200px]"
+                          title={row.path}
+                        >
+                          {getFileName(row.path)}
+                        </span>
+                      </td>
+                      <td className="py-1.5 text-right">
+                        <span className="font-mono text-primary tabular-nums">
+                          {row.count}
+                        </span>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            {hasMore && (
+              <button
+                onClick={() => setExpanded(!expanded)}
+                className="w-full mt-2 py-1 text-[10px] text-muted-foreground hover:text-foreground flex items-center justify-center gap-1 transition-colors"
+              >
+                {expanded ? (
+                  <>Show less <ChevronUp className="h-3 w-3" /></>
+                ) : (
+                  <>Show {rows.length - maxItems} more <ChevronDown className="h-3 w-3" /></>
+                )}
+              </button>
+            )}
+          </>
+        )}
+      </CardContent>
+    </Card>
   );
 }
 
-function CircularDepsTable({
+// Compact circular deps card
+function CircularDepsCard({
   cycles,
   onFileSelect,
 }: {
   cycles: CircularDep[];
   onFileSelect?: (path: string) => void;
 }) {
-  if (cycles.length === 0) {
-    return (
-      <div className="panel">
-        <div className="panel-header flex justify-between items-center">
-          <span>Circular Dependencies</span>
-          <span className="text-argus-green text-xs font-normal normal-case tracking-normal">
-            None detected
-          </span>
-        </div>
-        <p className="px-4 py-2 text-xs text-argus-muted border-b border-argus-border">
-          Import cycles that may cause issues
-        </p>
-        <div className="p-4 text-sm text-argus-green">
-          No circular dependencies found. Your import graph is acyclic.
-        </div>
-      </div>
-    );
-  }
+  const hasNoCycles = cycles.length === 0;
+  const [expanded, setExpanded] = useState(false);
+  const displayCycles = expanded ? cycles : cycles.slice(0, 5);
+  const hasMore = cycles.length > 5;
 
   return (
-    <div className="panel">
-      <div className="panel-header flex justify-between items-center">
-        <span>Circular Dependencies</span>
-        <span className="text-argus-red text-xs font-normal normal-case tracking-normal">
-          {cycles.length} cycle{cycles.length !== 1 ? 's' : ''} detected
-        </span>
-      </div>
-      <p className="px-4 py-2 text-xs text-argus-muted border-b border-argus-border">
-        Import cycles that may cause issues - consider refactoring
-      </p>
-      <div className="max-h-64 overflow-y-auto p-4 space-y-3">
-        {cycles.map((cycle, i) => (
-          <div
-            key={i}
-            className="bg-argus-darker border border-argus-red/30 rounded p-3"
-          >
-            <div className="flex flex-wrap items-center gap-1 text-sm font-mono">
-              {cycle.cycle.map((file, j) => (
-                <span key={j} className="flex items-center">
-                  <button
-                    className="text-argus-text hover:text-argus-accent transition-colors"
-                    onClick={() => onFileSelect?.(file)}
-                    title={file}
-                  >
-                    {getFileName(file)}
-                  </button>
-                  {j < cycle.cycle.length - 1 && (
-                    <span className="text-argus-red mx-1">{'\u2192'}</span>
-                  )}
-                </span>
-              ))}
-              <span className="text-argus-red mx-1">{'\u21BA'}</span>
-            </div>
+    <Card className={cn(
+      "flex flex-col",
+      hasNoCycles ? 'border-emerald-800/30' : 'border-red-800/30'
+    )}>
+      <CardHeader className="pb-2 pt-3 px-3">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-1.5">
+            {hasNoCycles ? (
+              <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500" />
+            ) : (
+              <AlertTriangle className="h-3.5 w-3.5 text-red-500" />
+            )}
+            <CardTitle className="text-sm font-medium">Circular Dependencies</CardTitle>
           </div>
-        ))}
-      </div>
-    </div>
+          <Badge
+            variant={hasNoCycles ? 'secondary' : 'destructive'}
+            className="text-[10px] px-1.5 py-0"
+          >
+            {hasNoCycles ? 'None' : cycles.length}
+          </Badge>
+        </div>
+      </CardHeader>
+      <CardContent className="pt-0 px-3 pb-3 flex-1">
+        {hasNoCycles ? (
+          <p className="text-xs text-emerald-500/80">
+            No circular dependencies detected
+          </p>
+        ) : (
+          <>
+            <div
+              className="max-h-[240px] overflow-y-auto  space-y-2"
+              style={{ scrollbarWidth: 'thin' }}
+            >
+              {displayCycles.map((cycle, i) => (
+                <div
+                  key={i}
+                  className="bg-red-950/30 border border-red-900/40 rounded p-2"
+                >
+                  <div className="flex flex-wrap items-center gap-1 text-[11px] font-mono">
+                    {cycle.cycle.map((file, j) => (
+                      <span key={j} className="flex items-center">
+                        <button
+                          className="text-foreground hover:text-primary transition-colors truncate max-w-[120px]"
+                          onClick={() => onFileSelect?.(file)}
+                          title={file}
+                        >
+                          {getFileName(file)}
+                        </button>
+                        {j < cycle.cycle.length - 1 && (
+                          <span className="text-red-500 mx-0.5">{'\u2192'}</span>
+                        )}
+                      </span>
+                    ))}
+                    <span className="text-red-500">{'\u21BA'}</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+            {hasMore && (
+              <button
+                onClick={() => setExpanded(!expanded)}
+                className="w-full mt-2 py-1 text-[10px] text-muted-foreground hover:text-foreground flex items-center justify-center gap-1 transition-colors"
+              >
+                {expanded ? (
+                  <>Show less <ChevronUp className="h-3 w-3" /></>
+                ) : (
+                  <>Show {cycles.length - 5} more <ChevronDown className="h-3 w-3" /></>
+                )}
+              </button>
+            )}
+          </>
+        )}
+      </CardContent>
+    </Card>
   );
 }
 
@@ -231,6 +273,7 @@ export function DependencyAnalysis({
   imports,
   onFileSelect,
   selectedFile,
+  metadata,
 }: DependencyAnalysisProps) {
   // Build a set of all file paths for quick lookup
   const fileSet = useMemo(() => new Set(files.map((f) => f.path)), [files]);
@@ -250,9 +293,6 @@ export function DependencyAnalysis({
     for (const imp of imports) {
       // Only count if both source and target exist in our file list
       if (fileSet.has(imp.source) && fileSet.has(imp.target)) {
-        // source imports target, so:
-        // - target is imported BY source (target has source as an importer)
-        // - source depends ON target (source has target as a dependency)
         importersMap.get(imp.target)?.add(imp.source);
         depsMap.get(imp.source)?.add(imp.target);
       }
@@ -309,6 +349,39 @@ export function DependencyAnalysis({
     return rows.sort((a, b) => b.count - a.count).slice(0, 50);
   }, [files, dependencies]);
 
+  // Orphaned files: no imports AND no importers (isolated files)
+  const orphanedFiles = useMemo<AnalysisRow[]>(() => {
+    const rows: AnalysisRow[] = [];
+    for (const file of files) {
+      const importerCount = importers.get(file.path)?.size || 0;
+      const depCount = dependencies.get(file.path)?.size || 0;
+      if (importerCount === 0 && depCount === 0) {
+        rows.push({
+          path: file.path,
+          count: 0,
+          lines: file.lines,
+        });
+      }
+    }
+    return rows;
+  }, [files, importers, dependencies]);
+
+  // Deep import chains: files with >10 dependencies
+  const deepImportChains = useMemo<AnalysisRow[]>(() => {
+    const rows: AnalysisRow[] = [];
+    for (const file of files) {
+      const depCount = dependencies.get(file.path)?.size || 0;
+      if (depCount > 10) {
+        rows.push({
+          path: file.path,
+          count: depCount,
+          lines: file.lines,
+        });
+      }
+    }
+    return rows.sort((a, b) => b.count - a.count);
+  }, [files, dependencies]);
+
   // Detect circular dependencies using DFS
   const circularDeps = useMemo<CircularDep[]>(() => {
     const cycles: CircularDep[] = [];
@@ -326,11 +399,9 @@ export function DependencyAnalysis({
         if (!visited.has(dep)) {
           dfs(dep);
         } else if (recursionStack.has(dep)) {
-          // Found a cycle - extract it
           const cycleStart = pathStack.indexOf(dep);
           if (cycleStart !== -1) {
             const cycle = pathStack.slice(cycleStart);
-            // Only add if we haven't seen this cycle before (check by sorting)
             const cycleKey = [...cycle].sort().join('|');
             const existing = cycles.find(
               (c) => [...c.cycle].sort().join('|') === cycleKey
@@ -355,9 +426,59 @@ export function DependencyAnalysis({
     return cycles;
   }, [files, dependencies]);
 
+  // Calculate health score
+  const healthScore = useMemo(() => {
+    const highCouplingCount = highestCoupling.filter(f => f.count > 10).length;
+    const orphanRatio = files.length > 0 ? orphanedFiles.length / files.length : 0;
+
+    return Math.max(0, Math.min(100,
+      100
+      - (circularDeps.length * 10)
+      - Math.min(30, highCouplingCount * 2)
+      - (orphanRatio > 0.1 ? 10 : 0)
+    ));
+  }, [circularDeps.length, highestCoupling, orphanedFiles.length, files.length]);
+
+  // Get health status
+  const getHealthStatus = (score: number): 'good' | 'warning' | 'bad' => {
+    if (score >= 80) return 'good';
+    if (score >= 50) return 'warning';
+    return 'bad';
+  };
+
+  // Total import edges
+  const totalImports = imports.filter(
+    imp => fileSet.has(imp.source) && fileSet.has(imp.target)
+  ).length;
+
+  // Calculate totals from metadata
+  const totalLines = useMemo(() => {
+    return files.reduce((sum, f) => sum + f.lines, 0);
+  }, [files]);
+
+  const totalSymbols = useMemo(() => {
+    if (!metadata?.symbolIndex) return 0;
+    return Object.keys(metadata.symbolIndex).length;
+  }, [metadata]);
+
+  // Group files by extension for file type distribution
+  const sortedExtensions = useMemo(() => {
+    const extensionCounts = new Map<string, { count: number; lines: number }>();
+    for (const file of files) {
+      const ext = file.extension || 'other';
+      const existing = extensionCounts.get(ext) || { count: 0, lines: 0 };
+      extensionCounts.set(ext, {
+        count: existing.count + 1,
+        lines: existing.lines + file.lines,
+      });
+    }
+    return Array.from(extensionCounts.entries())
+      .sort((a, b) => b[1].count - a[1].count);
+  }, [files]);
+
   if (files.length === 0) {
     return (
-      <div className="p-6 text-argus-muted text-sm">
+      <div className="p-6 text-muted-foreground text-sm">
         No file data available. Load a snapshot with enhanced metadata.
       </div>
     );
@@ -365,7 +486,7 @@ export function DependencyAnalysis({
 
   if (imports.length === 0) {
     return (
-      <div className="p-6 text-argus-muted text-sm">
+      <div className="p-6 text-muted-foreground text-sm">
         No import data available. This snapshot may not include dependency
         information.
       </div>
@@ -373,38 +494,214 @@ export function DependencyAnalysis({
   }
 
   return (
-    <div className="p-4 space-y-4 overflow-y-auto h-full">
-      <AnalysisTable
-        title="Entry Points"
-        description="Files not imported by anything else - where execution starts"
-        rows={entryPoints}
-        onFileSelect={onFileSelect}
-        selectedFile={selectedFile}
-        countLabel="Deps"
-        emptyMessage="All files are imported by at least one other file"
-      />
+    <div className="h-full overflow-y-auto  p-4 space-y-4">
+      {/* KPI Summary Row */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-2">
+        <StatCard
+          label="Total Files"
+          value={files.length}
+          icon={<FileCode2 className="h-4 w-4" />}
+          status="neutral"
+        />
+        <StatCard
+          label="Total Lines"
+          value={totalLines.toLocaleString()}
+          icon={<Code2 className="h-4 w-4" />}
+          status="neutral"
+        />
+        <StatCard
+          label="Symbols"
+          value={totalSymbols.toLocaleString()}
+          icon={<Package className="h-4 w-4" />}
+          status="neutral"
+        />
+        <StatCard
+          label="Imports"
+          value={totalImports}
+          icon={<ArrowRightLeft className="h-4 w-4" />}
+          status="neutral"
+        />
+        <StatCard
+          label="Entry Points"
+          value={entryPoints.length}
+          icon={<GitBranch className="h-4 w-4" />}
+          status="neutral"
+        />
+        <StatCard
+          label="Circular Deps"
+          value={circularDeps.length}
+          icon={<Link2 className="h-4 w-4" />}
+          status={circularDeps.length === 0 ? 'good' : 'bad'}
+        />
+        <StatCard
+          label="Health Score"
+          value={healthScore}
+          icon={<Activity className="h-4 w-4" />}
+          status={getHealthStatus(healthScore)}
+        />
+      </div>
 
-      <AnalysisTable
-        title="Most Imported"
-        description="Critical files - changes here affect many dependents"
-        rows={mostImported}
-        onFileSelect={onFileSelect}
-        selectedFile={selectedFile}
-        countLabel="Importers"
-        emptyMessage="No files are imported by other files"
-      />
+      {/* Main Grid - 2 columns on large screens */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <CompactTable
+          title="Entry Points"
+          rows={entryPoints}
+          onFileSelect={onFileSelect}
+          selectedFile={selectedFile}
+          countLabel="Deps"
+          emptyMessage="All files are imported by at least one other file"
+        />
 
-      <AnalysisTable
-        title="Highest Coupling"
-        description="Files with many dependencies - potential refactoring candidates"
-        rows={highestCoupling}
-        onFileSelect={onFileSelect}
-        selectedFile={selectedFile}
-        countLabel="Imports"
-        emptyMessage="No files have dependencies"
-      />
+        <CompactTable
+          title="Most Imported"
+          rows={mostImported}
+          onFileSelect={onFileSelect}
+          selectedFile={selectedFile}
+          countLabel="Importers"
+          emptyMessage="No files are imported by other files"
+        />
 
-      <CircularDepsTable cycles={circularDeps} onFileSelect={onFileSelect} />
+        <CompactTable
+          title="Highest Coupling"
+          rows={highestCoupling}
+          onFileSelect={onFileSelect}
+          selectedFile={selectedFile}
+          countLabel="Imports"
+          emptyMessage="No files have dependencies"
+        />
+
+        <CircularDepsCard cycles={circularDeps} onFileSelect={onFileSelect} />
+      </div>
+
+      {/* Additional Insights Section */}
+      {(orphanedFiles.length > 0 || deepImportChains.length > 0) && (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          {orphanedFiles.length > 0 && (
+            <Card className="border-amber-800/30">
+              <CardHeader className="pb-2 pt-3 px-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-1.5">
+                    <FileWarning className="h-3.5 w-3.5 text-amber-500" />
+                    <CardTitle className="text-sm font-medium">Orphaned Files</CardTitle>
+                  </div>
+                  <Badge variant="secondary" className="text-[10px] px-1.5 py-0 bg-amber-950/50 text-amber-400 border-amber-800/50">
+                    {orphanedFiles.length}
+                  </Badge>
+                </div>
+              </CardHeader>
+              <CardContent className="pt-0 px-3 pb-3">
+                <p className="text-[10px] text-muted-foreground mb-2">
+                  Files with no imports and no importers - may be unused
+                </p>
+                <div
+                  className="max-h-[160px] overflow-y-auto  space-y-1"
+                  style={{ scrollbarWidth: 'thin' }}
+                >
+                  {orphanedFiles.slice(0, 10).map((file) => (
+                    <button
+                      key={file.path}
+                      className={cn(
+                        "w-full text-left px-2 py-1 rounded text-xs font-mono truncate transition-colors",
+                        selectedFile === file.path
+                          ? "bg-accent"
+                          : "hover:bg-muted/50"
+                      )}
+                      onClick={() => onFileSelect?.(file.path)}
+                      title={file.path}
+                    >
+                      {getFileName(file.path)}
+                    </button>
+                  ))}
+                  {orphanedFiles.length > 10 && (
+                    <p className="text-[10px] text-muted-foreground px-2 py-1">
+                      +{orphanedFiles.length - 10} more orphaned files
+                    </p>
+                  )}
+                </div>
+              </CardContent>
+            </Card>
+          )}
+
+          {deepImportChains.length > 0 && (
+            <Card className="border-amber-800/30">
+              <CardHeader className="pb-2 pt-3 px-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-1.5">
+                    <Link2 className="h-3.5 w-3.5 text-amber-500" />
+                    <CardTitle className="text-sm font-medium">Deep Import Chains</CardTitle>
+                  </div>
+                  <Badge variant="secondary" className="text-[10px] px-1.5 py-0 bg-amber-950/50 text-amber-400 border-amber-800/50">
+                    {deepImportChains.length}
+                  </Badge>
+                </div>
+              </CardHeader>
+              <CardContent className="pt-0 px-3 pb-3">
+                <p className="text-[10px] text-muted-foreground mb-2">
+                  Files importing 10+ other files - consider refactoring
+                </p>
+                <div
+                  className="max-h-[160px] overflow-y-auto "
+                  style={{ scrollbarWidth: 'thin' }}
+                >
+                  <table className="w-full text-xs">
+                    <tbody>
+                      {deepImportChains.slice(0, 8).map((file) => (
+                        <tr
+                          key={file.path}
+                          className={cn(
+                            "cursor-pointer transition-colors",
+                            selectedFile === file.path
+                              ? "bg-accent"
+                              : "hover:bg-muted/50"
+                          )}
+                          onClick={() => onFileSelect?.(file.path)}
+                        >
+                          <td className="py-1 pr-2">
+                            <span
+                              className="font-mono truncate block max-w-[180px]"
+                              title={file.path}
+                            >
+                              {getFileName(file.path)}
+                            </span>
+                          </td>
+                          <td className="py-1 text-right">
+                            <span className="font-mono text-amber-400 tabular-nums">
+                              {file.count}
+                            </span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                  {deepImportChains.length > 8 && (
+                    <p className="text-[10px] text-muted-foreground px-2 py-1">
+                      +{deepImportChains.length - 8} more files
+                    </p>
+                  )}
+                </div>
+              </CardContent>
+            </Card>
+          )}
+        </div>
+      )}
+
+      {/* File Type Distribution Section */}
+      {sortedExtensions.length > 0 && (
+        <div className="mt-6 pt-6 border-t border-neutral-800">
+          <h3 className="text-sm font-medium text-neutral-400 mb-4">File Type Distribution</h3>
+          <div className="flex flex-wrap gap-2">
+            {sortedExtensions.map(([ext, stats]) => (
+              <div
+                key={ext}
+                className="flex items-center gap-1.5 px-2.5 py-1.5 bg-neutral-900 border border-neutral-700 rounded text-xs"
+              >
+                <span className="font-mono text-neutral-200">.{ext}</span>
+                <span className="text-neutral-500">({stats.count})</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
